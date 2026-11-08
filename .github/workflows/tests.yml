@@ -6,7 +6,9 @@ jobs:
   test:
     runs-on: macos-latest          # the watcher targets macOS (lsof, launchd); the tests run offline
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@v7.0.1
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          cache-dependency-glob: meetings.py   # the pinned dependencies live in its script header (PEP 723)
       - name: Run the offline test suite
         run: uv run --python 3.12 --with pytest --with "google-genai>=3.0,<4" pytest -q -p no:cacheprovider tests
