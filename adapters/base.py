@@ -138,6 +138,10 @@ class MessengerAdapter(ABC):
     def acknowledge(self, decision: Decision, note: str) -> None:
         """Best-effort cosmetic confirmation (toast, button text). Must never raise."""
 
+    def set_commands(self, commands: list[tuple[str, str]]) -> None:
+        """Publish [(name, description)] as the bot's command menu in private chats (optional capability)."""
+        raise NotImplementedError(f"{self.name} adapter does not support a command menu")
+
     def discover(self) -> list[tuple[str, str]]:
         """Setup helper: [(id, description)] of the users/groups this account can see."""
         return []

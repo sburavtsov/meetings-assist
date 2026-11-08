@@ -49,17 +49,34 @@ Each step leaves a marker next to the results (`<watch dir>/transcripts/`): `.an
 Nothing is sent to the group without your tap.
 
 ## Optional: meeting agenda from the bot
-Participants send **items to discuss** to the bot in a private chat; the bot assembles the agenda with the AI and replies.
+Participants send **items to discuss** to the bot in a private chat. The items are kept in a list (a cache); the agenda is
+assembled by the AI only when you ask, as a separate step, and you can rebuild it as often as you like.
 ```
-(you → bot)  - cancel button: show the tutorial only to tap players
+(you → bot)  - cancel button: show the tutorial only to tap players     adds items, no AI call
              - sound budget
-(you → bot)  /agenda        → "Повестка встречи  1. … — … (name)  …  Ориентировочно: ~30 мин"
+(you → bot)  /agenda   → "Повестка встречи  1. … — … (name)  2. … (перенос)  …  Ориентировочно: ~30 мин"
+(you → bot)  - one more topic       then   /agenda   again → rebuilt with everything so far
 ```
-Every line is one item. Commands: `/agenda` assemble (the list is kept), `/list` show, `/clear` start a new list.
+Every line is one item. Commands (they share the `agenda_` prefix, so they form one group in the bot's menu):
+
+| Command | Does | Old alias |
+|---|---|---|
+| `/agenda` | assemble / rebuild the agenda (the list is kept) | |
+| `/agenda_add` | add items (plain text works too) | |
+| `/agenda_list` | show the items and the carried-over questions | `/list` |
+| `/agenda_del N` | remove item N | `/del` |
+| `/agenda_clear` | start a new list | `/clear` |
+| `/agenda_help` | how it works | `/help`, `/start` |
+
+`uv run meetings.py bot-commands` publishes them as the bot's "/" menu (private chats only; `--show` just prints them).
+The names are one table (`COMMANDS` in `agenda.py`), so renaming is a one-line change.
+**Open questions** of the newest analysed meeting are added when the agenda is assembled, marked "(перенос)" and merged with
+submitted items on the same topic (`/list` shows them; turn off with `agenda.include_open_questions: false`).
+
 Enable it in `config.json`: `"agenda": {"enabled": true, "contributors": ["<telegram user id>"]}` (the approver is always
 allowed; `uv run meetings.py discover` shows ids). Agendas are saved under `<watch dir>/transcripts/agendas/`.
 The prompt is `prompts/agenda.txt` (overridable like the others). You can also use it without the bot:
-`uv run meetings.py agenda add "item" | list | assemble | clear`.
+`uv run meetings.py agenda add "item" | list | del N | assemble | clear`.
 
 **Privacy:** by default the bot only asks Telegram for button taps and never reads chat messages. With the agenda enabled it
 must also receive messages; Telegram then delivers every message the bot can see, including the group's if the bot is an
@@ -76,7 +93,7 @@ admin there. The adapter drops everything that is not a private chat message imm
 
 Main settings: `watch.*` (folder, file types, which audio tracks are speech, timings), `ai.speakers` / `ai.context`,
 `tasks.project` / `board` / `column` / `assignees` / `create_missing`, `messenger.group` / `chat` / `approver` / `project_name`,
-`agenda.enabled` / `contributors` / `max_items`.
+`agenda.enabled` / `contributors` / `max_items` / `include_open_questions`.
 See [`examples/config.json`](examples/config.json) and [`defaults/config.json`](defaults/config.json).
 
 The OBS multi-track layout is assumed by default (track 0 = mix, 1 = mic, 2 = system audio); change `watch.speech_tracks`

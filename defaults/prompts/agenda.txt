@@ -6,9 +6,14 @@ Project context: {context}
 Items submitted (each with who proposed it):
 {items}
 
+Open questions left unresolved at the previous meeting:
+{previous}
+
 Rules:
 - Write the agenda in Russian, as plain text for a chat message (no markdown headings, no tables), at most ~1200 characters.
-- Merge duplicates and closely related items. Never drop a distinct item and never invent new ones.
+- Merge duplicates and closely related items. Never drop a distinct item or open question and never invent new ones.
+- Every open question from the previous meeting is a carry-over point: include it and mark it "(перенос)". If it is the
+  same topic as a submitted item, merge them into one point and keep the mark.
 - Order by importance and urgency: items that block others or need a decision first, quick items last.
 - Format: the first line is "Повестка встречи"; then a numbered list. Each point: the topic in a few words, then " — "
   and what has to be decided or answered (one short phrase), and the proposer's name in parentheses when known.

@@ -66,6 +66,7 @@
   "agenda": {
     "enabled": false,
     "contributors": [],
-    "max_items": 100
+    "max_items": 100,
+    "include_open_questions": true
   }
 }

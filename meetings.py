@@ -7,11 +7,12 @@
   uv run meetings.py process FILE [FILE...] [--force] [--no-push] [--no-message]   # manual
   uv run meetings.py watch [--no-push] [--no-message]                               # auto-tracking
   uv run meetings.py approvals          handle send / skip taps (and agenda messages) once
-  uv run meetings.py agenda add "item" | list | assemble | clear     optional agenda step, locally (see agenda.py)
+  uv run meetings.py agenda add "item" | list | del N | assemble | clear    optional agenda step, locally (see agenda.py)
   uv run meetings.py status             what is done / pending
   uv run meetings.py check [--online]   validate settings, prompts, card layout, adapters (--online: credentials)
   uv run meetings.py cards FILE         show the cards that would be created for an <stem>.analysis.json
   uv run meetings.py message FILE       show the follow-up message for an <stem>.analysis.json
+  uv run meetings.py bot-commands [--show]   publish the agenda commands as the bot's menu (private chats only)
   uv run meetings.py discover           ids of users / groups the messenger account can see (for config.json)
   uv run meetings.py export-defaults    copy the default prompts + card layout to ~/.meetings-assist/ to edit
 
@@ -79,7 +80,8 @@ class Services:
             a, m = settings.S["agenda"], settings.S["messenger"]
             allowed = {str(m["approver"])} | {str(x) for x in a["contributors"]}
             self._agenda = agenda_mod.Agenda(self.ai, settings.out_dir(), allowed - {""}, a["max_items"],
-                                             settings.S["ai"]["speakers"], settings.S["ai"]["context"])
+                                             settings.S["ai"]["speakers"], settings.S["ai"]["context"],
+                                             include_previous=bool(a["include_open_questions"]))
         return self._agenda
 
 
@@ -285,12 +287,23 @@ def cmd_agenda(args: list[str], svc: Services) -> None:
         print(svc.agenda.add("local", "local", "\n".join(args[1:])))
     elif sub == "list":
         print(svc.agenda.show())
+    elif sub == "del" and len(args) > 1:
+        print(svc.agenda.delete(args[1]))
     elif sub == "assemble":
         print(svc.agenda.assemble())
     elif sub == "clear":
         print(svc.agenda.clear())
     else:
-        sys.exit('usage: meetings.py agenda add "item" ["item"...] | list | assemble | clear')
+        sys.exit('usage: meetings.py agenda add "item" ["item"...] | list | del N | assemble | clear')
+
+
+def cmd_bot_commands(args: list[str], svc: Services) -> None:
+    for name, desc in agenda_mod.COMMANDS:
+        print(f"/{name:13s} {desc}")
+    if "--show" in args:
+        return
+    svc.messenger.set_commands(agenda_mod.COMMANDS)
+    print("published as the bot's menu in private chats")
 
 
 def cmd_export_defaults() -> None:
@@ -320,6 +333,8 @@ def main() -> None:
             cmd_check(args, svc)
         elif cmd in ("cards", "message") and args:
             (cmd_cards if cmd == "cards" else cmd_message)(args, svc)
+        elif cmd == "bot-commands":
+            cmd_bot_commands(args, svc)
         elif cmd == "discover":
             cmd_discover(svc)
         elif cmd == "export-defaults":

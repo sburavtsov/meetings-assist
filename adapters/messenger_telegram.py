@@ -107,6 +107,12 @@ class TelegramAdapter(MessengerAdapter):
             "chat_id": cq["message"]["chat"]["id"], "message_id": cq["message"]["message_id"],
             "reply_markup": json.dumps({"inline_keyboard": [[{"text": note, "callback_data": "done"}]]})})
 
+    def set_commands(self, commands: list[tuple[str, str]]) -> None:
+        """The menu behind the "/" button, for private chats only (the group's menu is left alone)."""
+        self._call("setMyCommands", {
+            "commands": json.dumps([{"command": n, "description": d} for n, d in commands], ensure_ascii=False),
+            "scope": json.dumps({"type": "all_private_chats"})})
+
     def discover(self) -> list[tuple[str, str]]:
         """Private users who pressed /start (candidates for 'approver') and chats the bot sees ('group')."""
         found: dict[str, str] = {}
