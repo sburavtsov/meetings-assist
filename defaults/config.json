@@ -2,8 +2,19 @@
   "watch": {
     "dir": "~/Meetings",
     "out_dir": "",
-    "extensions": [".mp4", ".mov", ".mkv", ".m4a", ".mka", ".wav", ".mp3"],
-    "speech_tracks": [1, 2],
+    "extensions": [
+      ".mp4",
+      ".mov",
+      ".mkv",
+      ".m4a",
+      ".mka",
+      ".wav",
+      ".mp3"
+    ],
+    "speech_tracks": [
+      1,
+      2
+    ],
     "silence_db": -80.0,
     "settle_seconds": 10,
     "poll_seconds": 15,
@@ -17,7 +28,12 @@
     "context": "",
     "adapters": {
       "google": {
-        "models": ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.6-flash"],
+        "models": [
+          "gemini-3.8-flash",
+          "gemini-3.5-flash",
+          "gemini-3.7-flash",
+          "gemini-3.6-flash"
+        ],
         "chunk_seconds": 300,
         "min_piece_seconds": 60
       }
@@ -46,5 +62,10 @@
         "company_id": ""
       }
     }
+  },
+  "agenda": {
+    "enabled": false,
+    "contributors": [],
+    "max_items": 100
   }
 }

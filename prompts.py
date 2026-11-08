@@ -4,6 +4,7 @@
   analysis.txt       (none)                            summary / decisions / tasks / follow-up rules
   analysis_only.txt  {speakers} {analysis} {transcript} used when the audio had to be chunked
   chunk_note.txt     {known}                           appended to every chunk's prompt
+  agenda.txt         {items} {speakers} {context}      assembles the meeting agenda from submitted items
 The JSON structure the AI must return is the contract in adapters/base.py, not part of the prompts.
 """
 from __future__ import annotations
@@ -13,7 +14,8 @@ import string
 import settings
 
 FIELDS = {"transcribe.txt": {"speakers", "context"}, "analysis.txt": set(),
-          "analysis_only.txt": {"speakers", "analysis", "transcript"}, "chunk_note.txt": {"known"}}
+          "analysis_only.txt": {"speakers", "analysis", "transcript"}, "chunk_note.txt": {"known"},
+          "agenda.txt": {"items", "speakers", "context"}}
 
 
 def _load(name: str) -> str:
@@ -44,6 +46,10 @@ def chunk(speakers: str, context: str, known: list[str]) -> str:
 
 def analysis_only(speakers: str, transcript: str) -> str:
     return _load("analysis_only.txt").format(speakers=speakers or "unknown", analysis=analysis(), transcript=transcript)
+
+
+def agenda(items: str, speakers: str, context: str) -> str:
+    return _load("agenda.txt").format(items=items, speakers=speakers or "unknown", context=context or "none")
 
 
 def validate() -> None:

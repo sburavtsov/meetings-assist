@@ -48,6 +48,23 @@ Each step leaves a marker next to the results (`<watch dir>/transcripts/`): `.an
 `.message.json`, `.skipped.json`, so every step is idempotent and a crash resumes where it stopped.
 Nothing is sent to the group without your tap.
 
+## Optional: meeting agenda from the bot
+Participants send **items to discuss** to the bot in a private chat; the bot assembles the agenda with the AI and replies.
+```
+(you → bot)  - cancel button: show the tutorial only to tap players
+             - sound budget
+(you → bot)  /agenda        → "Повестка встречи  1. … — … (name)  …  Ориентировочно: ~30 мин"
+```
+Every line is one item. Commands: `/agenda` assemble (the list is kept), `/list` show, `/clear` start a new list.
+Enable it in `config.json`: `"agenda": {"enabled": true, "contributors": ["<telegram user id>"]}` (the approver is always
+allowed; `uv run meetings.py discover` shows ids). Agendas are saved under `<watch dir>/transcripts/agendas/`.
+The prompt is `prompts/agenda.txt` (overridable like the others). You can also use it without the bot:
+`uv run meetings.py agenda add "item" | list | assemble | clear`.
+
+**Privacy:** by default the bot only asks Telegram for button taps and never reads chat messages. With the agenda enabled it
+must also receive messages; Telegram then delivers every message the bot can see, including the group's if the bot is an
+admin there. The adapter drops everything that is not a private chat message immediately, unread and unstored.
+
 ## Configuration
 `defaults/` (in the repo) holds every default; `~/.meetings-assist/` overrides it **per file**:
 
@@ -58,7 +75,8 @@ Nothing is sent to the group without your tap.
 | `cards/<tasks adapter>.json` | replaces the named card layouts (`meeting` / `task`) |
 
 Main settings: `watch.*` (folder, file types, which audio tracks are speech, timings), `ai.speakers` / `ai.context`,
-`tasks.project` / `board` / `column` / `assignees` / `create_missing`, `messenger.group` / `chat` / `approver` / `project_name`.
+`tasks.project` / `board` / `column` / `assignees` / `create_missing`, `messenger.group` / `chat` / `approver` / `project_name`,
+`agenda.enabled` / `contributors` / `max_items`.
 See [`examples/config.json`](examples/config.json) and [`defaults/config.json`](defaults/config.json).
 
 The OBS multi-track layout is assumed by default (track 0 = mix, 1 = mic, 2 = system audio); change `watch.speech_tracks`
@@ -67,6 +85,7 @@ for other setups. Silent tracks are detected and skipped.
 ## Architecture
 ```
 meetings.py        CLI + watcher          notify.py   follow-up message + approval workflow
+agenda.py          optional agenda step
 media.py           ffmpeg helpers         prompts.py  prompt loading + placeholder checks
 report.py          markdown report        settings.py / secrets_config.py   layered config / secrets
 adapters/

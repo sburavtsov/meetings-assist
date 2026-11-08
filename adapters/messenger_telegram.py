@@ -13,7 +13,7 @@ import urllib.parse
 import urllib.request
 
 import secrets_config
-from adapters.base import Decision, MessengerAdapter
+from adapters.base import Decision, IncomingMessage, MessengerAdapter, Updates
 
 
 class TelegramAdapter(MessengerAdapter):
@@ -69,25 +69,36 @@ class TelegramAdapter(MessengerAdapter):
             "text": f"Предпросмотр — уйдёт в группу после подтверждения:\n\n{preview}"})
         return str(res["message_id"])
 
-    def poll_decisions(self) -> list[Decision]:
-        """Only callback queries are requested, so group chatter is never read."""
+    def poll(self, want_messages: bool = False) -> Updates:
+        """By default only button taps are requested, so group chatter is never read. With `want_messages` Telegram
+        also delivers every message the bot can see (it is an admin of the group, so that includes the group's):
+        everything that is not a private chat message is dropped right here, unread and unstored."""
         off_file = self.state_dir / ".telegram_offset"
-        params = {"timeout": 0, "allowed_updates": json.dumps(["callback_query"])}
+        kinds = ["callback_query"] + (["message"] if want_messages else [])
+        params = {"timeout": 0, "allowed_updates": json.dumps(kinds)}
         if off_file.exists():
             params["offset"] = off_file.read_text().strip()
-        out = []
+        decisions, messages = [], []
         for u in self._call("getUpdates", params):
             off_file.write_text(str(u["update_id"] + 1))
             cq = u.get("callback_query")
-            if not cq:
+            if cq:
+                if str(cq["from"]["id"]) != self._approver:
+                    self._quiet("answerCallbackQuery", {"callback_query_id": cq["id"], "text": "Нет доступа"})
+                    continue
+                action, _, aid = cq.get("data", "").partition(":")
+                if action in ("send", "skip"):
+                    decisions.append(Decision(aid, action, ref=cq))
                 continue
-            if str(cq["from"]["id"]) != self._approver:
-                self._quiet("answerCallbackQuery", {"callback_query_id": cq["id"], "text": "Нет доступа"})
-                continue
-            action, _, aid = cq.get("data", "").partition(":")
-            if action in ("send", "skip"):
-                out.append(Decision(aid, action, ref=cq))
-        return out
+            m = u.get("message")
+            if (want_messages and m and (m.get("chat") or {}).get("type") == "private"
+                    and not (m.get("from") or {}).get("is_bot") and m.get("text")):
+                messages.append(IncomingMessage(str(m["from"]["id"]), m["from"].get("first_name", ""),
+                                                m["text"], str(m["chat"]["id"])))
+        return Updates(decisions, messages)
+
+    def reply(self, to: IncomingMessage, text: str) -> None:
+        self._call("sendMessage", {"chat_id": to.chat_ref, "text": text[:4000], "disable_web_page_preview": "true"})
 
     def acknowledge(self, decision: Decision, note: str) -> None:
         cq = decision.ref

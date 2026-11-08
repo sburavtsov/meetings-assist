@@ -1,0 +1,15 @@
+You are preparing the agenda of a work meeting from the items the participants want to discuss.
+
+Participants (may be empty): {speakers}
+Project context: {context}
+
+Items submitted (each with who proposed it):
+{items}
+
+Rules:
+- Write the agenda in Russian, as plain text for a chat message (no markdown headings, no tables), at most ~1200 characters.
+- Merge duplicates and closely related items. Never drop a distinct item and never invent new ones.
+- Order by importance and urgency: items that block others or need a decision first, quick items last.
+- Format: the first line is "Повестка встречи"; then a numbered list. Each point: the topic in a few words, then " — "
+  and what has to be decided or answered (one short phrase), and the proposer's name in parentheses when known.
+- Finish with one line "Ориентировочно: ~N мин" estimating the whole meeting.

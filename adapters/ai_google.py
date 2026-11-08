@@ -90,6 +90,14 @@ class GoogleAIAdapter(AIAdapter):
         missing = [m for m in self.cfg["models"] if m not in names]
         return f"{len(names)} models visible" + (f"; NOT available to this key: {missing}" if missing else "")
 
+    def generate_text(self, prompt: str) -> str:
+        client = self._client(120_000)
+        try:
+            resp, _ = _generate(client, self.cfg["models"], [prompt], types.GenerateContentConfig(temperature=0.3))
+        except Blocked as e:
+            raise RuntimeError(f"the AI refused to answer ({e})") from e
+        return resp.text.strip()
+
     # ---- chunked fallback -------------------------------------------------------------------
     def _chunked(self, client, audio: Path, dur: float, speakers: str, context: str):
         """Transcribe in pieces when the whole file is refused. Returns (utterances, speakers, gaps)."""

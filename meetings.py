@@ -6,7 +6,8 @@
 
   uv run meetings.py process FILE [FILE...] [--force] [--no-push] [--no-message]   # manual
   uv run meetings.py watch [--no-push] [--no-message]                               # auto-tracking
-  uv run meetings.py approvals          handle send / skip taps once
+  uv run meetings.py approvals          handle send / skip taps (and agenda messages) once
+  uv run meetings.py agenda add "item" | list | assemble | clear     optional agenda step, locally (see agenda.py)
   uv run meetings.py status             what is done / pending
   uv run meetings.py check [--online]   validate settings, prompts, card layout, adapters (--online: credentials)
   uv run meetings.py cards FILE         show the cards that would be created for an <stem>.analysis.json
@@ -35,6 +36,7 @@ import traceback
 from pathlib import Path
 
 import adapters
+import agenda as agenda_mod
 import media
 import notify
 import prompts
@@ -47,7 +49,7 @@ class Services:
     """Adapters are created on first use, from the names in config.json."""
 
     def __init__(self):
-        self._ai = self._tasks = self._notifier = None
+        self._ai = self._tasks = self._notifier = self._agenda = None
 
     @property
     def ai(self):
@@ -66,6 +68,19 @@ class Services:
             self._notifier = notify.Notifier(adapters.create_messenger(sec, settings.out_dir()),
                                              settings.out_dir(), sec["project_name"])
         return self._notifier
+
+    @property
+    def messenger(self):
+        return self.notifier.m
+
+    @property
+    def agenda(self):
+        if not self._agenda:
+            a, m = settings.S["agenda"], settings.S["messenger"]
+            allowed = {str(m["approver"])} | {str(x) for x in a["contributors"]}
+            self._agenda = agenda_mod.Agenda(self.ai, settings.out_dir(), allowed - {""}, a["max_items"],
+                                             settings.S["ai"]["speakers"], settings.S["ai"]["context"])
+        return self._agenda
 
 
 W = settings.S["watch"]
@@ -141,11 +156,16 @@ def run_pipeline(path: Path, svc: Services, push: bool = True, force: bool = Fal
         svc.notifier.request(path.stem, data)
 
 
-def poll_approvals(svc: Services) -> None:
+def poll_inbox(svc: Services) -> None:
+    """One poll of the messenger: approve/skip taps -> Notifier, private messages -> Agenda (only if enabled)."""
     try:
-        svc.notifier.process()
+        want = bool(settings.S["agenda"]["enabled"])
+        up = svc.messenger.poll(want_messages=want)
+        svc.notifier.handle(up.decisions)
+        if want:
+            svc.agenda.handle(svc.messenger, up.messages)
     except Exception as e:  # never let messenger trouble stop the pipeline
-        print(f"  approvals poll failed: {str(e)[:120]}", flush=True)
+        print(f"  inbox poll failed: {str(e)[:120]}", flush=True)
 
 
 def flag(args: list[str], *names: str) -> bool:
@@ -162,7 +182,7 @@ def cmd_process(args: list[str], svc: Services) -> None:
         print(f"== {f.name}", flush=True)
         run_pipeline(f, svc, push=not flag(args, "--no-push"), force=flag(args, "--force"),
                      message=not flag(args, "--no-message", "--no-telegram"))
-        poll_approvals(svc)
+        poll_inbox(svc)
 
 
 def cmd_watch(args: list[str], svc: Services) -> None:
@@ -186,8 +206,8 @@ def cmd_watch(args: list[str], svc: Services) -> None:
                 traceback.print_exc()
                 failed[p] = time.time()
                 print(f"  FAILED, will retry in {W['retry_failed_after'] // 60} min", flush=True)
-        if message:
-            poll_approvals(svc)
+        if message or settings.S["agenda"]["enabled"]:
+            poll_inbox(svc)
         time.sleep(W["poll_seconds"])
 
 
@@ -245,6 +265,9 @@ def cmd_check(args: list[str], svc: Services) -> None:
     sample = {"summary": "s", "decisions": [{"decision": "d", "made_by": "A", "evidence_quote": "q"}], "open_questions": ["?"],
               "tasks": [{"title": "t", "description": "d", "assignee": "A", "deadline": "today", "confidence": "low",
                          "evidence_quote": "q"}]}
+    a = settings.S["agenda"]
+    step("agenda step", lambda: ("enabled: contributors " + str(sorted({str(settings.S["messenger"]["approver"])} | {str(x) for x in a["contributors"]}))
+                                 if a["enabled"] else "disabled (agenda.enabled=false)"))
     step("card layout", lambda: f"{len(svc.tasks.preview('check', sample))} sample cards render")
 
     def messenger():
@@ -253,6 +276,21 @@ def cmd_check(args: list[str], svc: Services) -> None:
         return svc.notifier.m.check() if online else "loaded"
     step(f"messenger adapter [{settings.S['messenger']['adapter']}]", messenger)
     sys.exit(0 if ok else 1)
+
+
+def cmd_agenda(args: list[str], svc: Services) -> None:
+    """Local use of the agenda step (no messenger involved): add / list / assemble / clear."""
+    sub = args[0] if args else ""
+    if sub == "add" and len(args) > 1:
+        print(svc.agenda.add("local", "local", "\n".join(args[1:])))
+    elif sub == "list":
+        print(svc.agenda.show())
+    elif sub == "assemble":
+        print(svc.agenda.assemble())
+    elif sub == "clear":
+        print(svc.agenda.clear())
+    else:
+        sys.exit('usage: meetings.py agenda add "item" ["item"...] | list | assemble | clear')
 
 
 def cmd_export_defaults() -> None:
@@ -275,7 +313,9 @@ def main() -> None:
         elif cmd == "status":
             cmd_status()
         elif cmd == "approvals":
-            poll_approvals(svc)
+            poll_inbox(svc)
+        elif cmd == "agenda":
+            cmd_agenda(args, svc)
         elif cmd == "check":
             cmd_check(args, svc)
         elif cmd in ("cards", "message") and args:

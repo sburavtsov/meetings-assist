@@ -1,7 +1,8 @@
 """Follow-up message + approval workflow, written against the MessengerAdapter interface only.
+(The pipeline polls the messenger once and hands the approve/skip taps to Notifier.handle().)
 
 Flow: request()  -> private preview with send/skip to the approver, state <stem>.message.json = pending
-      process()  -> handles taps: send -> posts to the group/chat (state: sent), skip -> nothing is posted
+      handle()   -> handles taps: send -> posts to the group/chat (state: sent), skip -> nothing is posted
 A meeting is announced at most once: any existing state file blocks a second preview.
 """
 from __future__ import annotations
@@ -67,8 +68,8 @@ class Notifier:
         state.write_text(json.dumps({"status": "pending", "approval_id": aid, "preview_ref": ref}))
         print("  message: preview sent to the approver, waiting for a tap")
 
-    def process(self) -> None:
-        for d in self.m.poll_decisions():
+    def handle(self, decisions: list) -> None:
+        for d in decisions:
             found = None
             for f in self.out_dir.glob("*.message.json"):
                 st = json.loads(f.read_text())

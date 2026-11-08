@@ -1,7 +1,10 @@
 {
   "watch": {
     "dir": "~/Meetings",
-    "speech_tracks": [1, 2]
+    "speech_tracks": [
+      1,
+      2
+    ]
   },
   "ai": {
     "speakers": "Alice (the user), Bob",
@@ -27,5 +30,12 @@
         "company_id": "00000000-0000-0000-0000-000000000000"
       }
     }
+  },
+  "agenda": {
+    "enabled": false,
+    "contributors": [
+      "987654321"
+    ],
+    "max_items": 100
   }
 }
