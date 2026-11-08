@@ -3,7 +3,8 @@
 Participants (the approver + agenda.contributors) send items to the bot in a private chat; every line is one item.
   /agenda        assemble the agenda with the AI and reply with it (as often as you like; the list is kept)
   /agenda_add    add items (plain text works too)       /agenda_list   show the items
-  /agenda_del N  remove item N                          /agenda_clear  start a new list      /agenda_help
+  /agenda_del 1 3 5-7  remove several items at once (bare /agenda_del: the next message is the numbers)
+  /agenda_clear  start a new list                       /agenda_help
   (the old short names /list /del /clear /help /start still work). The table is COMMANDS below; it also
   drives the bot's command menu (`meetings.py bot-commands`).
 Adding items never calls the AI: the list is a cache, and assembling is a separate call. With
@@ -27,7 +28,7 @@ COMMANDS = [
     ("agenda", "Собрать повестку из списка (можно повторять)"),
     ("agenda_add", "Добавить пункты (можно и просто текстом)"),
     ("agenda_list", "Показать пункты и вопросы с прошлой встречи"),
-    ("agenda_del", "Удалить пункт: /agenda_del N"),
+    ("agenda_del", "Удалить пункты: /agenda_del 1 3 5-7"),
     ("agenda_clear", "Начать новый список"),
     ("agenda_help", "Как это работает"),
 ]
@@ -35,11 +36,34 @@ ALIASES = {"list": "agenda_list", "del": "agenda_del", "clear": "agenda_clear", 
 HELP = ("Присылайте темы для обсуждения, каждая строка — отдельный пункт.\n"
         + "\n".join(f"/{n} — {d}" for n, d in COMMANDS))
 _BULLET = re.compile(r"^\s*(?:[-–—•*·]|\d+[.)])\s*")
+_NUMBERS = re.compile(r"^[\d\s,;.\-–—]+$")
+_RANGE = re.compile(r"(\d+)(?:[-–—](\d+))?")
 
 
 def parse_items(text: str) -> list[str]:
     """One item per non-empty line; leading bullets / numbering are stripped."""
     return [b for line in text.splitlines() if (b := _BULLET.sub("", line).strip())]
+
+
+def parse_numbers(text: str) -> list[int] | None:
+    """'1, 2 3; 5-7' -> [1, 2, 3, 5, 6, 7]. None if the text is not purely item numbers."""
+    text = text.strip()
+    if not text or not _NUMBERS.fullmatch(text):
+        return None
+    out: set[int] = set()
+    for tok in re.split(r"[\s,;]+", text):
+        tok = tok.rstrip(".")
+        if not tok:
+            continue
+        m = _RANGE.fullmatch(tok)
+        if not m:
+            return None
+        a, b = int(m[1]), int(m[2] or m[1])
+        a, b = min(a, b), max(a, b)
+        if b - a > 1000:
+            return None
+        out.update(range(a, b + 1))
+    return sorted(out) or None
 
 
 class Agenda:
@@ -51,12 +75,30 @@ class Agenda:
         self.path = state_dir / "agenda.json"
 
     # ---- state ------------------------------------------------------------------------------
+    def _read(self) -> dict:
+        return json.loads(self.path.read_text()) if self.path.exists() else {"items": []}
+
     def _load(self) -> list[dict]:
-        return json.loads(self.path.read_text())["items"] if self.path.exists() else []
+        return self._read()["items"]
+
+    def _write(self, state: dict) -> None:
+        self.dir.mkdir(exist_ok=True)
+        self.path.write_text(json.dumps(state, ensure_ascii=False, indent=2))
 
     def _save(self, items: list[dict]) -> None:
-        self.dir.mkdir(exist_ok=True)
-        self.path.write_text(json.dumps({"items": items}, ensure_ascii=False, indent=2))
+        self._write({**self._read(), "items": items})
+
+    def _set_pending(self, sender_id: str, what: str | None) -> None:
+        """Per-sender 'the next message answers a command' state (kept in the state file)."""
+        state = self._read()
+        pending = state.get("pending", {})
+        if what and pending.get(sender_id) != what:
+            pending[sender_id] = what
+        elif not what and sender_id in pending:
+            del pending[sender_id]
+        else:
+            return
+        self._write({**state, "pending": pending})
 
     def previous_questions(self) -> tuple[str, list[str]]:
         """(meeting stem, open questions) of the newest analysed meeting; ("", []) if disabled or none."""
@@ -92,13 +134,29 @@ class Agenda:
             out.append(f"Открытые вопросы с прошлой встречи ({stem}), попадут в повестку:\n" + "\n".join(f"• {q}" for q in qs))
         return "\n\n".join(out)
 
-    def delete(self, number: str) -> str:
+    def delete(self, sender_id: str, arg: str) -> str:
+        """/agenda_del 1 3 5-7 deletes several items at once; a bare /agenda_del waits for the numbers."""
         items = self._load()
-        if not number.isdigit() or not 1 <= int(number) <= len(items):
-            return f"Укажите номер пункта от 1 до {len(items)}: /del N" if items else "Список пуст."
-        gone = items.pop(int(number) - 1)
-        self._save(items)
-        return f"Удалено: {gone['text']}. Осталось пунктов: {len(items)}."
+        if not items:
+            return "Список пуст."
+        if not arg.strip():
+            self._set_pending(sender_id, "del")
+            return "Какие пункты удалить? Пришлите номера, например: 1 3 5-7. Посмотреть список — /agenda_list."
+        nums = parse_numbers(arg)
+        if nums is None:
+            return "Не похоже на номера. Пример: /agenda_del 1 3 5-7"
+        return self._delete_numbers(nums)
+
+    def _delete_numbers(self, nums: list[int]) -> str:
+        items = self._load()
+        bad = [n for n in nums if not 1 <= n <= len(items)]
+        if bad:                                              # all or nothing: never delete half of a request
+            return f"Нет пунктов с номерами: {', '.join(map(str, bad))} (всего {len(items)}). Ничего не удалено."
+        gone = [items[n - 1] for n in nums]
+        keep = [x for i, x in enumerate(items, 1) if i not in set(nums)]
+        self._save(keep)
+        shown = "\n".join(f"{n}. {g['text'][:60]}" for n, g in zip(nums, gone))
+        return f"Удалено ({len(gone)}):\n{shown}\nОсталось пунктов: {len(keep)}."
 
     def clear(self) -> str:
         n = len(self._load())
@@ -133,6 +191,7 @@ class Agenda:
             return "Нет доступа."
         text = msg.text.strip()
         if text.startswith("/"):
+            self._set_pending(msg.sender_id, None)          # any command cancels a waiting question
             head, _, arg = text.partition(" ")
             name = head[1:].split("@")[0].lower()
             name = ALIASES.get(name, name)
@@ -140,14 +199,23 @@ class Agenda:
                 return self.assemble()
             if name == "agenda_add":
                 return self.add(msg.sender_id, msg.sender_name, arg) if arg.strip() else \
-                    "Напишите пункты после команды или просто пришлите их текстом (каждая строка — пункт)."
+                    "Пришлите пункты следующим сообщением (каждая строка — пункт). Команда не обязательна: любой обычный текст добавляется как пункты."
             if name == "agenda_list":
                 return self.show()
             if name == "agenda_del":
-                return self.delete(arg.strip())
+                return self.delete(msg.sender_id, arg)
             if name == "agenda_clear":
                 return self.clear()
             return HELP
+        if self._read().get("pending", {}).get(msg.sender_id) == "del":
+            nums = parse_numbers(text)
+            if nums is None:
+                return "Не похоже на номера пунктов. Пришлите номера, например: 1 3 5-7. Отмена — любая команда, например /agenda_list."
+            self._set_pending(msg.sender_id, None)
+            return self._delete_numbers(nums)
+        if parse_numbers(text) is not None:                  # "1, 2, 3" is almost surely not an agenda item
+            return ("Похоже на номера пунктов. Чтобы удалить: /agenda_del 1 2 3. "
+                    "Если это действительно пункт — отправьте его так: /agenda_add <текст>.")
         return self.add(msg.sender_id, msg.sender_name, text)
 
     def handle(self, messenger: MessengerAdapter, messages: list[IncomingMessage]) -> None:

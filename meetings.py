@@ -7,7 +7,7 @@
   uv run meetings.py process FILE [FILE...] [--force] [--no-push] [--no-message]   # manual
   uv run meetings.py watch [--no-push] [--no-message]                               # auto-tracking
   uv run meetings.py approvals          handle send / skip taps (and agenda messages) once
-  uv run meetings.py agenda add "item" | list | del N | assemble | clear    optional agenda step, locally (see agenda.py)
+  uv run meetings.py agenda add "item" | list | del 1 3 5-7 | assemble | clear    optional agenda step, locally (see agenda.py)
   uv run meetings.py status             what is done / pending
   uv run meetings.py check [--online]   validate settings, prompts, card layout, adapters (--online: credentials)
   uv run meetings.py cards FILE         show the cards that would be created for an <stem>.analysis.json
@@ -158,6 +158,9 @@ def run_pipeline(path: Path, svc: Services, push: bool = True, force: bool = Fal
         svc.notifier.request(path.stem, data)
 
 
+_last_poll_error = ["", 0.0]
+
+
 def poll_inbox(svc: Services) -> None:
     """One poll of the messenger: approve/skip taps -> Notifier, private messages -> Agenda (only if enabled)."""
     try:
@@ -167,7 +170,10 @@ def poll_inbox(svc: Services) -> None:
         if want:
             svc.agenda.handle(svc.messenger, up.messages)
     except Exception as e:  # never let messenger trouble stop the pipeline
-        print(f"  inbox poll failed: {str(e)[:120]}", flush=True)
+        msg = str(e)[:120]
+        if msg != _last_poll_error[0] or time.time() - _last_poll_error[1] > 60:   # fast polling must not flood the log
+            print(f"  inbox poll failed: {msg}", flush=True)
+            _last_poll_error[:] = [msg, time.time()]
 
 
 def flag(args: list[str], *names: str) -> bool:
@@ -288,13 +294,13 @@ def cmd_agenda(args: list[str], svc: Services) -> None:
     elif sub == "list":
         print(svc.agenda.show())
     elif sub == "del" and len(args) > 1:
-        print(svc.agenda.delete(args[1]))
+        print(svc.agenda.delete("local", " ".join(args[1:])))
     elif sub == "assemble":
         print(svc.agenda.assemble())
     elif sub == "clear":
         print(svc.agenda.clear())
     else:
-        sys.exit('usage: meetings.py agenda add "item" ["item"...] | list | del N | assemble | clear')
+        sys.exit('usage: meetings.py agenda add "item" ["item"...] | list | del 1 3 5-7 | assemble | clear')
 
 
 def cmd_bot_commands(args: list[str], svc: Services) -> None:

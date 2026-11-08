@@ -64,19 +64,21 @@ Every line is one item. Commands (they share the `agenda_` prefix, so they form 
 | `/agenda` | assemble / rebuild the agenda (the list is kept) | |
 | `/agenda_add` | add items (plain text works too) | |
 | `/agenda_list` | show the items and the carried-over questions | `/list` |
-| `/agenda_del N` | remove item N | `/del` |
+| `/agenda_del 1 3 5-7` | remove several items at once (bare `/agenda_del`: the next message is the numbers) | `/del` |
 | `/agenda_clear` | start a new list | `/clear` |
 | `/agenda_help` | how it works | `/help`, `/start` |
 
 `uv run meetings.py bot-commands` publishes them as the bot's "/" menu (private chats only; `--show` just prints them).
 The names are one table (`COMMANDS` in `agenda.py`), so renaming is a one-line change.
+A message that consists only of numbers ("1, 2, 3") is never added as an item; the bot points to `/agenda_del` instead
+(add such an item explicitly with `/agenda_add 2026`).
 **Open questions** of the newest analysed meeting are added when the agenda is assembled, marked "(перенос)" and merged with
 submitted items on the same topic (`/list` shows them; turn off with `agenda.include_open_questions: false`).
 
 Enable it in `config.json`: `"agenda": {"enabled": true, "contributors": ["<telegram user id>"]}` (the approver is always
 allowed; `uv run meetings.py discover` shows ids). Agendas are saved under `<watch dir>/transcripts/agendas/`.
 The prompt is `prompts/agenda.txt` (overridable like the others). You can also use it without the bot:
-`uv run meetings.py agenda add "item" | list | del N | assemble | clear`.
+`uv run meetings.py agenda add "item" | list | del 1 3 5-7 | assemble | clear`.
 
 **Privacy:** by default the bot only asks Telegram for button taps and never reads chat messages. With the agenda enabled it
 must also receive messages; Telegram then delivers every message the bot can see, including the group's if the bot is an
