@@ -1,43 +1,47 @@
-"""Optional step: collect items to discuss from private messages to the bot and assemble the meeting agenda.
+"""Optional step: collect items to discuss from private messages to the bot, assemble the meeting agenda, and keep the
+list in step with what the meetings actually covered.
 
 Participants (the approver + agenda.contributors) send items to the bot in a private chat; every line is one item.
-  /agenda        assemble the agenda with the AI and reply with it (as often as you like; the list is kept)
+  /agenda        assemble the agenda with the AI and reply with it (as often as you like; the latest one counts)
   /agenda_add    add items (plain text works too)       /agenda_list   show the items
   /agenda_del 1 3 5-7  remove several items at once (bare /agenda_del: the next message is the numbers)
   /agenda_clear  start a new list                       /agenda_help
-  (the old short names /list /del /clear /help /start still work). The table is COMMANDS below; it also
-  drives the bot's command menu (`meetings.py bot-commands`).
-Adding items never calls the AI: the list is a cache, and assembling is a separate call. The AI returns the agenda as
-structured points (JSON); the chat text is rendered from them.
-After a meeting the pipeline checks the agenda against the recording (plan.py) and puts everything that was not resolved
-- plus the meeting's open questions and tasks nobody mentioned - back into the list as carry-over items (add_carryover).
-Items live in <out dir>/agenda.json; every assembled agenda is saved to <out dir>/agendas/<timestamp>.json (+ .md);
-the .json is what the next recording is checked against.
-Written against the AIAdapter / MessengerAdapter interfaces only; enabled with agenda.enabled in config.json.
+  (the old short names /list /del /clear /help /start still work). The table is COMMAND_NAMES below; it also
+  drives the bot's command menu (`meetings.py bot-commands`). Texts: defaults/messages/<language>.json.
+
+Life cycle (state in SQLite, see store.py):
+  items --/agenda--> agenda (points remember the ids of the items they came from; a rebuild replaces the previous one)
+  recording analysed  -> reserve(): the newest open agenda made before the recording is reserved for that meeting
+                      -> prepare_carry(): what was not resolved waits for the follow-up decision
+  follow-up sent      -> apply(): the agenda's items leave the list, the leftovers come back as carry-over items
+  follow-up skipped   -> discard(): nothing changes in the list, the agenda is free again
+Adding items never calls the AI: assembling is a separate call that returns structured points (JSON).
 """
 from __future__ import annotations
 
-import json
 import re
-import time
-from pathlib import Path
 
 import plan as plan_mod
 import prompts
 from adapters.base import AIAdapter, IncomingMessage, MessengerAdapter, QuotaExceeded
+from store import Store
+from texts import t
 
-# (name, description shown in the bot's menu). Names: lowercase letters, digits, underscore (Telegram's rule).
-COMMANDS = [
-    ("agenda", "Собрать повестку из списка (можно повторять)"),
-    ("agenda_add", "Добавить пункты (можно и просто текстом)"),
-    ("agenda_list", "Показать пункты и вопросы с прошлой встречи"),
-    ("agenda_del", "Удалить пункты: /agenda_del 1 3 5-7"),
-    ("agenda_clear", "Начать новый список"),
-    ("agenda_help", "Как это работает"),
-]
+COMMAND_NAMES = ["agenda", "agenda_add", "agenda_list", "agenda_del", "agenda_clear", "agenda_help"]
 ALIASES = {"list": "agenda_list", "del": "agenda_del", "clear": "agenda_clear", "help": "agenda_help", "start": "agenda_help"}
-HELP = ("Присылайте темы для обсуждения, каждая строка — отдельный пункт.\n"
-        + "\n".join(f"/{n} — {d}" for n, d in COMMANDS))
+AGENDA_SLACK = 30 * 60      # an agenda assembled up to 30 minutes after the recording started still belongs to it
+ESCALATE_AFTER = 3          # a point carried this many times asks to be decided or dropped
+
+
+def commands() -> list[tuple[str, str]]:
+    """(name, description) for the bot's menu. Names: lowercase letters, digits, underscore (Telegram's rule)."""
+    return [(n, t(f"cmd.{n}")) for n in COMMAND_NAMES]
+
+
+def help_text() -> str:
+    return t("help.intro") + "\n" + "\n".join(f"/{n} — {d}" for n, d in commands())
+
+
 _BULLET = re.compile(r"^\s*(?:[-–—•*·]|\d+[.)])\s*")
 _NUMBERS = re.compile(r"^[\d\s,;.\-–—]+$")
 _RANGE = re.compile(r"(\d+)(?:[-–—](\d+))?")
@@ -69,204 +73,190 @@ def parse_numbers(text: str) -> list[int] | None:
     return sorted(out) or None
 
 
-_S = lambda t, **k: {"type": t, **k}
+_S = lambda typ, **k: {"type": typ, **k}
 AGENDA_SCHEMA = _S("object", properties={"points": _S("array", items=_S("object", properties={
     "topic": _S("string"), "question": _S("string"), "proposer": _S("string"),
     "from_items": _S("array", items=_S("integer")), "estimate_min": _S("integer")},
     required=["topic", "question", "from_items"]))}, required=["points"])
-ESCALATE_AFTER = 3                      # a point carried this many times asks to be dropped or decided
 
 
 def render(points: list[dict]) -> str:
     """The agenda as a chat message."""
-    lines = ["Повестка встречи"]
+    lines = [t("agenda.title")]
     for p in points:
         tail = " (" + p["proposer"] + ")" if p.get("proposer") else ""
         c = p.get("carried", 0)
-        mark = (f" — переносится в {c + 1}-й раз: решить или убрать" if c >= ESCALATE_AFTER else " (перенос)") if c else ""
+        mark = (t("agenda.mark_escalate", n=c + 1) if c >= ESCALATE_AFTER else t("agenda.mark_carried")) if c else ""
         lines.append(f"{p['n']}. {plan_mod.point_text(p)}{tail}{mark}")
     total = sum(int(p.get("estimate_min") or 0) for p in points)
-    return "\n".join(lines) + (f"\n\nОриентировочно: ~{total} мин" if total else "")
+    return "\n".join(lines) + ("\n\n" + t("agenda.estimate", min=total) if total else "")
 
 
 def structure(raw: dict, items: list[dict]) -> list[dict]:
-    """The AI's points -> clean numbered points. Never lets an item vanish: items the AI forgot become points of their own."""
+    """The AI's points -> clean numbered points that remember their item ids. Never lets an item vanish: items the AI
+    forgot (or put under an empty topic) become points of their own; points not made of any listed item are dropped."""
     used, points = set(), []
     for p in raw.get("points") or []:
         if not (p.get("topic") or "").strip():
-            continue                                   # its items stay unused, so they come back below as points of their own
-        src = list(dict.fromkeys(n for n in p.get("from_items") or [] if isinstance(n, int) and 1 <= n <= len(items) and n not in used))
+            continue                                   # its items stay unused, so they come back below
+        src = list(dict.fromkeys(n for n in p.get("from_items") or []
+                                 if isinstance(n, int) and 1 <= n <= len(items) and n not in used))
+        if not src:
+            continue                                   # invented by the AI, or only items already used: not an agenda point
         used.update(src)
         points.append({"topic": p["topic"].strip(), "question": (p.get("question") or "").strip(),
                        "proposer": (p.get("proposer") or "").strip(), "estimate_min": int(p.get("estimate_min") or 0),
                        "from_items": src, "carried": max([items[n - 1].get("carried", 0) for n in src] or [0])})
     for n, it in enumerate(items, 1):
         if n not in used:
-            points.append({"topic": it["text"], "question": "", "proposer": it.get("from", "") if not it.get("carried") else "",
+            points.append({"topic": it["text"], "question": "", "proposer": "" if it.get("carried") else it.get("from", ""),
                            "estimate_min": 0, "from_items": [n], "carried": it.get("carried", 0)})
     for i, p in enumerate(points, 1):
         p["n"] = i
+        p["item_ids"] = [items[n - 1]["id"] for n in p["from_items"] if "id" in items[n - 1]]
     return points
 
 
 class Agenda:
-    def __init__(self, ai: AIAdapter, state_dir: Path, allowed: set[str], max_items: int, speakers: str, context: str,
-                 include_previous: bool = True):
-        self.ai, self.dir, self.allowed, self.max = ai, state_dir, allowed, max_items
-        self.include_carryover = include_previous
+    def __init__(self, ai: AIAdapter, store: Store, allowed: set[str], max_items: int, speakers: str, context: str):
+        self.ai, self.db, self.allowed, self.max = ai, store, allowed, max_items
         self.speakers, self.context = speakers, context
-        self.path = state_dir / "agenda.json"
 
-    # ---- state ------------------------------------------------------------------------------
-    def _read(self) -> dict:
-        return json.loads(self.path.read_text()) if self.path.exists() else {"items": []}
-
-    def _load(self) -> list[dict]:
-        return self._read()["items"]
-
-    def _write(self, state: dict) -> None:
-        self.dir.mkdir(exist_ok=True)
-        self.path.write_text(json.dumps(state, ensure_ascii=False, indent=2))
-
-    def _save(self, items: list[dict]) -> None:
-        self._write({**self._read(), "items": items})
-
-    def _set_pending(self, sender_id: str, what: str | None) -> None:
-        """Per-sender 'the next message answers a command' state (kept in the state file)."""
-        state = self._read()
-        pending = state.get("pending", {})
-        if what and pending.get(sender_id) != what:
-            pending[sender_id] = what
-        elif not what and sender_id in pending:
-            del pending[sender_id]
-        else:
-            return
-        self._write({**state, "pending": pending})
-
-    def add_carryover(self, stem: str, points: list[dict]) -> int:
-        """Put the points a meeting left over into the list (after the people's own items). Returns how many were added."""
-        items = self._load()
-        have = {plan_mod._norm(x["text"]) for x in items}
-        new = [p for p in points if plan_mod._norm(p["text"]) not in have]
-        for p in new:
-            items.append({"text": p["text"], "from": "", "sender_id": "", "at": time.strftime("%Y-%m-%d %H:%M"),
-                          "carried": p["carried"], "from_meeting": stem, "why": p["why"]})
-        if new:
-            self._save(items)
-        return len(new)
-
-    # ---- operations (each returns the reply text) ---------------------------------------------
+    # ---- chat operations (each returns the reply text) ---------------------------------------------
     def add(self, sender_id: str, name: str, text: str) -> str:
-        new, items = parse_items(text), self._load()
+        new = parse_items(text)
         if not new:
-            return HELP
-        room = self.max - len(items)
-        if room <= 0:
-            return f"Список полон ({self.max} пунктов). Соберите повестку: /agenda или начните заново: /clear"
-        taken = new[:room]
-        items += [{"text": t, "from": name, "sender_id": sender_id, "at": time.strftime("%Y-%m-%d %H:%M")} for t in taken]
-        self._save(items)
-        skipped = f" (не поместилось: {len(new) - len(taken)})" if len(taken) < len(new) else ""
-        return f"Добавлено: {len(taken)}{skipped}. Всего пунктов: {len(items)}. Собрать повестку — /agenda"
+            return help_text()
+        if len(self.db.items()) >= self.max:
+            return t("agenda.full", max=self.max)
+        added, total = self.db.add_items([{"text": x, "from": name, "sender_id": sender_id} for x in new], limit=self.max)
+        skipped = t("agenda.added_skipped", n=len(new) - added) if added < len(new) else ""
+        return t("agenda.added", added=added, skipped=skipped, total=total)
 
     @staticmethod
     def _label(x: dict) -> str:
         if x.get("carried"):
-            return f" (перенос{' ×' + str(x['carried']) if x['carried'] > 1 else ''})"
+            return f" ({t('agenda.label_carried')}{' ×' + str(x['carried']) if x['carried'] > 1 else ''})"
         return f" ({x['from']})" if x.get("from") else ""
 
     def show(self) -> str:
-        items = self._load()
+        items = self.db.items()
         if not items:
-            return "Список пуст. Пришлите темы для обсуждения."
-        return "Пункты:\n" + "\n".join(f"{i}. {x['text']}{self._label(x)}" for i, x in enumerate(items, 1))
+            return t("agenda.empty")
+        return t("agenda.items") + "\n" + "\n".join(f"{i}. {x['text']}{self._label(x)}" for i, x in enumerate(items, 1))
 
     def delete(self, sender_id: str, arg: str) -> str:
         """/agenda_del 1 3 5-7 deletes several items at once; a bare /agenda_del waits for the numbers."""
-        items = self._load()
-        if not items:
-            return "Список пуст."
+        if not self.db.items():
+            return t("agenda.empty_short")
         if not arg.strip():
-            self._set_pending(sender_id, "del")
-            return "Какие пункты удалить? Пришлите номера, например: 1 3 5-7. Посмотреть список — /agenda_list."
+            self.db.set_pending(sender_id, "del")
+            return t("agenda.del_ask")
         nums = parse_numbers(arg)
-        if nums is None:
-            return "Не похоже на номера. Пример: /agenda_del 1 3 5-7"
-        return self._delete_numbers(nums)
+        return t("agenda.del_bad_arg") if nums is None else self._delete_numbers(nums)
 
     def _delete_numbers(self, nums: list[int]) -> str:
-        items = self._load()
+        items = self.db.items()
         bad = [n for n in nums if not 1 <= n <= len(items)]
         if bad:                                              # all or nothing: never delete half of a request
-            return f"Нет пунктов с номерами: {', '.join(map(str, bad))} (всего {len(items)}). Ничего не удалено."
+            return t("agenda.del_missing", bad=", ".join(map(str, bad)), total=len(items))
         gone = [items[n - 1] for n in nums]
-        keep = [x for i, x in enumerate(items, 1) if i not in set(nums)]
-        self._save(keep)
+        self.db.delete_items([g["id"] for g in gone])
         shown = "\n".join(f"{n}. {g['text'][:60]}" for n, g in zip(nums, gone))
-        return f"Удалено ({len(gone)}):\n{shown}\nОсталось пунктов: {len(keep)}."
+        return t("agenda.deleted", n=len(gone), shown=shown, left=len(items) - len(gone))
 
     def clear(self) -> str:
-        n = len(self._load())
-        self._save([])
-        return f"Список очищен ({n})."
+        return t("agenda.cleared", n=self.db.clear_items())
 
     def assemble(self) -> str:
-        items = self._load()
+        items = self.db.items()
         if not items:
-            return "Список пуст. Пришлите темы для обсуждения."
+            return t("agenda.empty")
         listing = "\n".join(f"{i}. {x['text']}" + (f" ({x['from']})" if x.get("from") else "") +
                             (f" [carry-over, already on {x['carried']} meeting(s)]" if x.get("carried") else "")
                             for i, x in enumerate(items, 1))
         try:
             raw = self.ai.generate_json(prompts.agenda(listing, self.speakers, self.context), AGENDA_SCHEMA)
         except QuotaExceeded:
-            return "Дневной лимит AI исчерпан. Список сохранён, повторите /agenda позже."
+            return t("agenda.quota")
         except Exception as e:
             print(f"  agenda: assembling failed: {str(e)[:150]}", flush=True)
-            return f"Не удалось собрать повестку ({str(e)[:100]}). Список сохранён, повторите /agenda."
+            return t("agenda.failed", error=str(e)[:100])
         points = structure(raw, items)
-        text = render(points)
-        folder = self.dir / "agendas"
-        folder.mkdir(parents=True, exist_ok=True)
-        base, n = time.strftime("%Y%m%d-%H%M%S"), 1
-        while (folder / (f"{base}.json" if n == 1 else f"{base}-{n}.json")).exists():
-            n += 1                                     # several rebuilds in one second must not overwrite
-        target = folder / (f"{base}.json" if n == 1 else f"{base}-{n}.json")
-        target.write_text(json.dumps({"created": time.time(), "points": points}, ensure_ascii=False, indent=2))
-        target.with_suffix(".md").write_text(text + "\n")
-        return text + "\n\nСписок сохранён: /agenda_clear — начать новый."
+        self.db.save_agenda(points)
+        return render(points) + "\n\n" + t("agenda.saved")
 
-    # ---- Telegram-style entry point -------------------------------------------------------------
+    # ---- meeting life cycle (called by the pipeline) ---------------------------------------------------
+    def reserve(self, stem: str, start: float, previous_start: float | None, max_age_days: float) -> dict | None:
+        """Reserve the agenda of this meeting: the newest open one made before the recording (+ slack), after the
+        previous meeting and not older than max_age_days. A meeting that is analysed again gets the same one back."""
+        earliest = max(start - max_age_days * 86400, previous_start or 0)
+        a = self.db.pick_agenda(stem, start + AGENDA_SLACK, earliest)
+        if a and a["state"] == "open":
+            self.db.set_agenda_state(a["id"], "reserved", stem)
+        return a
+
+    def prepare_carry(self, stem: str, points: list[dict], agenda_id: int | None) -> None:
+        """Leftovers wait for the follow-up decision (apply / discard). Never overrides a finished decision."""
+        c = self.db.carry(stem)
+        if c and c["status"] != "pending":
+            return
+        self.db.set_carry(stem, "pending", points, agenda_id)
+
+    def apply(self, stem: str, force: bool = False) -> int | None:
+        """The meeting counts: its agenda's items leave the list, the leftovers come back. Returns how many were added
+        (None if nothing was waiting)."""
+        c = self.db.carry(stem)
+        if not c or (c["status"] != "pending" and not force):
+            return None
+        if c["agenda_id"] and (a := self.db.agenda(c["agenda_id"])):
+            self.db.delete_items([i for p in a["points"] for i in p.get("item_ids", [])])
+            self.db.set_agenda_state(a["id"], "used", stem)
+        have = {plan_mod.norm(x["text"]) for x in self.db.items()}
+        new = [p for p in c["points"] if plan_mod.norm(p["text"]) not in have]
+        self.db.add_items([{"text": p["text"], "carried": p["carried"], "from_meeting": stem, "why": p["why"]} for p in new])
+        self.db.set_carry(stem, "applied", c["points"], c["agenda_id"])
+        return len(new)
+
+    def discard(self, stem: str) -> None:
+        """The meeting does not count (follow-up not sent): the list stays, the agenda is free again."""
+        c = self.db.carry(stem)
+        if not c or c["status"] != "pending":
+            return
+        if c["agenda_id"] and (a := self.db.agenda(c["agenda_id"])) and a["state"] == "reserved":
+            newer = any(x["id"] > a["id"] for x in self.db.agendas())
+            self.db.set_agenda_state(a["id"], "replaced" if newer else "open", None)
+        self.db.set_carry(stem, "discarded", c["points"], c["agenda_id"])
+
+    # ---- chat entry point -----------------------------------------------------------------------------
     def answer(self, msg: IncomingMessage) -> str:
         if msg.sender_id not in self.allowed:
-            return "Нет доступа."
+            return t("agenda.no_access")
         text = msg.text.strip()
         if text.startswith("/"):
-            self._set_pending(msg.sender_id, None)          # any command cancels a waiting question
+            self.db.set_pending(msg.sender_id, None)          # any command cancels a waiting question
             head, _, arg = text.partition(" ")
             name = head[1:].split("@")[0].lower()
             name = ALIASES.get(name, name)
             if name == "agenda":
                 return self.assemble()
             if name == "agenda_add":
-                return self.add(msg.sender_id, msg.sender_name, arg) if arg.strip() else \
-                    "Пришлите пункты следующим сообщением (каждая строка — пункт). Команда не обязательна: любой обычный текст добавляется как пункты."
+                return self.add(msg.sender_id, msg.sender_name, arg) if arg.strip() else t("agenda.add_how")
             if name == "agenda_list":
                 return self.show()
             if name == "agenda_del":
                 return self.delete(msg.sender_id, arg)
             if name == "agenda_clear":
                 return self.clear()
-            return HELP
-        if self._read().get("pending", {}).get(msg.sender_id) == "del":
+            return help_text()
+        if self.db.pending(msg.sender_id) == "del":
             nums = parse_numbers(text)
             if nums is None:
-                return "Не похоже на номера пунктов. Пришлите номера, например: 1 3 5-7. Отмена — любая команда, например /agenda_list."
-            self._set_pending(msg.sender_id, None)
+                return t("agenda.del_bad_pending")
+            self.db.set_pending(msg.sender_id, None)
             return self._delete_numbers(nums)
         if parse_numbers(text) is not None:                  # "1, 2, 3" is almost surely not an agenda item
-            return ("Похоже на номера пунктов. Чтобы удалить: /agenda_del 1 2 3. "
-                    "Если это действительно пункт — отправьте его так: /agenda_add <текст>.")
+            return t("agenda.numbers_only")
         return self.add(msg.sender_id, msg.sender_name, text)
 
     def handle(self, messenger: MessengerAdapter, messages: list[IncomingMessage]) -> None:

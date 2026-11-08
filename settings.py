@@ -3,10 +3,13 @@
   defaults/config.json        every setting with its default value
   defaults/prompts/*.txt      AI prompts
   defaults/cards/<tasks adapter>.json   card layout for the task system
+  defaults/messages/<lang>.json         texts of the bot and of the follow-up message
 The same relative paths in ~/.meetings-assist/ override the defaults, per file:
   config.json   only the keys you want to change (deep merge; unknown keys are reported)
   prompts/X.txt replaces that one prompt
   cards/X.json  replaces the named top-level cards ("meeting" / "task"), the rest keep their defaults
+  messages/X.json replaces the named texts, the rest keep their defaults
+Saving any of these is picked up by a running watcher (reload_if_changed).
 Secrets are separate: secrets_config.py. Stdlib only.
 """
 from __future__ import annotations
@@ -52,6 +55,38 @@ def load() -> dict:
 S = load()
 
 
+def _fingerprint() -> tuple:
+    """Modification times of every override file: config.json, prompts/, cards/, messages/."""
+    files = [USER_CONFIG] + [p for d in ("prompts", "cards", "messages") for p in sorted((USER_DIR / d).glob("*"))]
+    return tuple((str(p), p.stat().st_mtime) for p in files if p.exists())
+
+
+_seen = _fingerprint()
+
+
+def reload_if_changed() -> bool:
+    """Re-read the settings after an override file was saved. A broken file keeps the previous settings (and says so).
+    S is updated in place, so every `settings.S[...]` lookup sees the new values. Returns True if anything changed."""
+    global _seen
+    now = _fingerprint()
+    if now == _seen:
+        return False
+    _seen = now
+    try:
+        new = load()
+    except RuntimeError as e:
+        print(f"settings: NOT reloaded, keeping the previous settings: {e}", file=sys.stderr, flush=True)
+        return False
+    S.clear()
+    S.update(new)
+    return True
+
+
+def state_path() -> Path:
+    """The local SQLite state (agenda list, agendas, messenger offset). Never inside a synced folder."""
+    return Path(os.environ.get("MEETINGS_ASSIST_STATE", USER_DIR / "state.db"))
+
+
 def get(dotted: str):
     v = S
     for part in dotted.split("."):
@@ -95,11 +130,11 @@ def layered_json(name: str) -> dict:
 
 
 def export_defaults() -> list[tuple[Path, bool]]:
-    """Copy defaults/prompts and defaults/cards into ~/.meetings-assist/ as editable starting points (never overwrites)."""
+    """Copy defaults/prompts, cards and messages into ~/.meetings-assist/ as editable starting points (never overwrites)."""
     done = []
     for src in sorted(DEFAULTS_DIR.rglob("*")):
         rel = src.relative_to(DEFAULTS_DIR)
-        if src.is_file() and rel.parts[0] in ("prompts", "cards"):
+        if src.is_file() and rel.parts[0] in ("prompts", "cards", "messages"):
             dst = USER_DIR / rel
             fresh = not dst.exists()
             if fresh:

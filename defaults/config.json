@@ -17,6 +17,7 @@
     ],
     "silence_db": -80.0,
     "settle_seconds": 10,
+    "skip_open_files": true,
     "poll_seconds": 15,
     "min_words": 30,
     "retry_failed_after": 600,
@@ -45,6 +46,7 @@
     "chat": "",
     "approver": "",
     "project_name": "",
+    "language": "ru",
     "adapters": {
       "telegram": {}
     }

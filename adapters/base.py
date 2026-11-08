@@ -118,10 +118,6 @@ class AIAdapter(ABC):
         """Structured answer to a text prompt (used by the optional agenda step)."""
         raise NotImplementedError(f"{self.name} adapter does not support generate_json")
 
-    def generate_text(self, prompt: str) -> str:
-        """Plain text answer to a text prompt (used by the optional agenda step)."""
-        raise NotImplementedError(f"{self.name} adapter does not support generate_text")
-
     def check(self) -> str:
         """Verify credentials/connectivity (used by `meetings.py check --online`). Returns a short status."""
         return "no online check"
@@ -152,11 +148,12 @@ class Updates:
 
 class MessengerAdapter(ABC):
     name = ""
+    max_length = 4000                                # longest text send() / ask_approval() accept (characters)
 
-    def __init__(self, section: dict, state_dir: Path):
+    def __init__(self, section: dict, state):
         self.section = section                       # "messenger" section: group, chat, approver, ...
         self.cfg = section["adapters"][self.name]
-        self.state_dir = state_dir                   # where the adapter may keep its own small state
+        self.state = state                           # small persistent key/value state: .get(key) / .set(key, value)
 
     @abstractmethod
     def send(self, text: str) -> str:
@@ -167,9 +164,10 @@ class MessengerAdapter(ABC):
         """Privately show `preview` to the approver with send / skip choices. Returns a reference id."""
 
     @abstractmethod
-    def poll(self, want_messages: bool = False) -> Updates:
+    def poll(self, want_messages: bool = False, wait: int = 0) -> Updates:
         """New events since the last call: approve/skip taps (only from the approver; others are refused inside)
-        and, only if `want_messages`, private messages to the bot. Group chatter must never be returned or kept."""
+        and, only if `want_messages`, private messages to the bot. Group chatter must never be returned or kept.
+        `wait` > 0: block up to that many seconds until something arrives (long polling; used by the inbox thread)."""
 
     def reply(self, to: IncomingMessage, text: str) -> None:
         """Answer a private message."""
@@ -188,7 +186,6 @@ class MessengerAdapter(ABC):
 
     def check(self) -> str:
         return "no online check"
-
 
 @dataclass
 class Card:
@@ -215,3 +212,8 @@ class TaskAdapter(ABC):
 
     def check(self) -> str:
         return "no online check"
+
+    def add_note(self, stem: str, title: str, text: str) -> str:
+        """Create one extra card holding a long plain text (e.g. a follow-up too long for the messenger). Must be safe
+        to retry. Returns the card id. Optional capability."""
+        raise NotImplementedError(f"{self.name} adapter does not support notes")

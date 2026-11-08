@@ -1,6 +1,6 @@
 """What was planned before a meeting, and what happened to it. Adapter-independent.
 
-Before the meeting:  build_plan()   -> the agenda that was assembled for it + the previous meeting's tasks/decisions,
+Before the meeting:  build_plan()   -> the agenda reserved for it (agenda.py) + the previous meeting's tasks/decisions,
                                        handed to AIAdapter.analyze(plan=...) so the AI checks them against the recording.
 After the analysis:  verify()       -> checks every quote against the transcript; an unproven claim never hides a topic
                      carry_points() -> the points that go to the next meeting (code decides, the AI only classifies)
@@ -14,13 +14,13 @@ from __future__ import annotations
 
 import json
 import re
-import time
 from datetime import datetime
 from pathlib import Path
 
+from texts import t as text_of
+
 CARRY_STATUSES = {"discussed_open", "partial", "not_discussed"}
 ASK_AGAIN_TASKS = {"blocked", "not_mentioned"}
-AGENDA_SLACK = 30 * 60            # an agenda assembled up to 30 minutes after the recording started still belongs to it
 _STEM_TIME = re.compile(r"(\d{4})-(\d{2})-(\d{2})[ T_](\d{2})-(\d{2})-(\d{2})")
 
 
@@ -35,61 +35,43 @@ def recording_time(stem: str, mtime: float) -> float:
     return mtime
 
 
-def _norm(s: str) -> str:
+def norm(s: str) -> str:
+    """Text comparison key: lower case, punctuation and repeated spaces dropped."""
     return re.sub(r"[^\w]+", " ", s.lower()).strip()
 
 
-def _jsons(folder: Path) -> list[tuple[Path, dict]]:
-    out = []
-    for p in sorted(folder.glob("*.json")) if folder.exists() else []:
-        try:
-            out.append((p, json.loads(p.read_text())))
-        except (OSError, ValueError):
-            continue                                   # a broken file must never stop a meeting from being processed
-    return out
-
-
 # ---- before the meeting -----------------------------------------------------------------------
-def pick_agenda(out_dir: Path, stem: str, rec_start: float, max_age_days: float = 7) -> tuple[Path, dict] | None:
-    """The newest assembled agenda made before the recording started, not yet used by another meeting."""
+def previous_meeting(out_dir: Path, stem: str, start: float) -> tuple[str, dict, float] | None:
+    """(stem, analysis, recording time) of the latest meeting recorded before this one. Ordered by the recording time
+    (name, else file time), not by when the analysis was written; recordings skipped as too short are not meetings."""
     best = None
-    for p, a in _jsons(out_dir / "agendas"):
-        if a.get("used_by") not in (None, stem) or not a.get("points"):
+    for p in out_dir.glob("*.analysis.json"):
+        other = p.name.removesuffix(".analysis.json")
+        if other == stem or (out_dir / f"{other}.skipped.json").exists():
             continue
-        made = a.get("created", 0)
-        if made > rec_start + AGENDA_SLACK or rec_start - made > max_age_days * 86400:
-            continue
-        if best is None or made >= best[1].get("created", 0):
-            best = (p, a)
+        when = recording_time(other, p.stat().st_mtime)
+        if when < start and (best is None or when > best[2]):
+            try:
+                best = (other, json.loads(p.read_text()), when)
+            except (OSError, ValueError):
+                continue                               # a broken file must never stop a meeting from being processed
     return best
 
 
-def previous_meeting(out_dir: Path, stem: str) -> tuple[str, dict] | None:
-    """(stem, analysis) of the newest analysed meeting other than this one."""
-    files = sorted((p for p in out_dir.glob("*.analysis.json") if p.name != f"{stem}.analysis.json"),
-                   key=lambda p: p.stat().st_mtime)
-    for p in reversed(files):
-        try:
-            return p.name.removesuffix(".analysis.json"), json.loads(p.read_text())
-        except (OSError, ValueError):
-            continue
-    return None
-
-
-def build_plan(out_dir: Path, stem: str, rec_start: float, agenda: bool = True, tasks: bool = True,
-               max_age_days: float = 7) -> dict | None:
-    """{"agenda": [...], "tasks": [...], "decisions": [...], "agenda_file": name, "previous": stem} or None."""
+def build_plan(agenda: dict | None, previous: tuple | None, tasks: bool = True) -> dict | None:
+    """{"agenda": [...], "agenda_id": id, "tasks": [...], "decisions": [...], "previous": stem} or None.
+    `agenda` is the reserved agenda (store row), `previous` the result of previous_meeting()."""
     plan: dict = {}
-    if agenda and (a := pick_agenda(out_dir, stem, rec_start, max_age_days)):
+    if agenda and agenda.get("points"):
         plan["agenda"] = [{"n": p["n"], "text": point_text(p), **({"carried": p["carried"]} if p.get("carried") else {})}
-                          for p in a[1]["points"]]
-        plan["agenda_file"] = a[0].name
-    if tasks and (prev := previous_meeting(out_dir, stem)):
-        pt = [t for t in prev[1].get("tasks") or [] if t.get("title")]
+                          for p in agenda["points"]]
+        plan["agenda_id"] = agenda["id"]
+    if tasks and previous:
+        pt = [x for x in previous[1].get("tasks") or [] if x.get("title")]
         if pt:
-            plan["tasks"] = [{"n": i, "title": t["title"], "assignee": t.get("assignee") or ""} for i, t in enumerate(pt, 1)]
-            plan["decisions"] = [d if isinstance(d, str) else d.get("decision", "") for d in prev[1].get("decisions") or []]
-            plan["previous"] = prev[0]
+            plan["tasks"] = [{"n": i, "title": x["title"], "assignee": x.get("assignee") or ""} for i, x in enumerate(pt, 1)]
+            plan["decisions"] = [d if isinstance(d, str) else d.get("decision", "") for d in previous[1].get("decisions") or []]
+            plan["previous"] = previous[0]
     return plan or None
 
 
@@ -98,26 +80,12 @@ def point_text(p: dict) -> str:
     return " — ".join(x for x in (p.get("topic", "").strip(), p.get("question", "").strip()) if x)
 
 
-def claim_agenda(out_dir: Path, plan: dict | None, stem: str) -> None:
-    """Mark the agenda as used by this meeting so the next meeting cannot pick it again."""
-    if not plan or not plan.get("agenda_file"):
-        return
-    p = out_dir / "agendas" / plan["agenda_file"]
-    try:
-        a = json.loads(p.read_text())
-        if a.get("used_by") != stem:
-            a["used_by"] = stem
-            p.write_text(json.dumps(a, ensure_ascii=False, indent=2))
-    except (OSError, ValueError):
-        pass
-
-
 # ---- after the analysis -----------------------------------------------------------------------
 def _quote_ok(quote: str | None, transcript: str) -> bool:
     if not quote:
         return False
-    frags = [f for f in re.split(r"\.\.\.|…", quote) if len(_norm(f)) >= 12]
-    return bool(frags) and any(_norm(f) in transcript for f in frags)
+    frags = [f for f in re.split(r"\.\.\.|…", quote) if len(norm(f)) >= 12]
+    return bool(frags) and any(norm(f) in transcript for f in frags)
 
 
 def verify(data: dict, plan: dict | None) -> dict:
@@ -126,7 +94,7 @@ def verify(data: dict, plan: dict | None) -> dict:
     - 'resolved' / 'done' / 'in_progress' need a quote found in the transcript; otherwise the topic is not trusted:
       resolved -> discussed_open, done / in_progress -> not_mentioned (carried / asked about again, never lost)"""
     plan = plan or {}
-    transcript = _norm(" ".join(u.get("text", "") for u in data.get("utterances") or []))
+    transcript = norm(" ".join(u.get("text", "") for u in data.get("utterances") or []))
     if plan.get("agenda"):
         by_n = {r.get("n"): r for r in data.get("agenda_review") or [] if isinstance(r, dict)}
         review = []
@@ -164,7 +132,7 @@ def carry_points(data: dict, plan: dict | None, include_open_questions: bool = T
     plan, out, seen = plan or {}, [], set()
 
     def add(text: str, carried: int, why: str) -> None:
-        text, key = " ".join(text.split()), _norm(text)
+        text, key = " ".join(text.split()), norm(text)
         if text and key not in seen:
             seen.add(key)
             out.append({"text": text, "carried": carried, "why": why})
@@ -178,7 +146,7 @@ def carry_points(data: dict, plan: dict | None, include_open_questions: bool = T
         t = next((x for x in plan.get("tasks") or [] if x["n"] == r.get("n")), None)
         if t and r.get("status") in ASK_AGAIN_TASKS:
             who = f" ({t['assignee']})" if t.get("assignee") else ""
-            add(f"Статус по задаче: {t['title']}{who}", 1, "task_" + r["status"])
+            add(text_of("agenda.task_status", title=t["title"], who=who), 1, "task_" + r["status"])
     if include_open_questions:
         for q in data.get("open_questions") or []:
             if isinstance(q, str):

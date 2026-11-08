@@ -13,8 +13,7 @@ from google.genai import types
 import media
 import prompts
 import secrets_config
-from adapters.base import (ANALYSIS_KEYS, ANALYSIS_SCHEMA, TRANSCRIPT_KEYS, AIAdapter, QuotaExceeded, analysis_schema,
-                           review_keys)
+from adapters.base import ANALYSIS_KEYS, ANALYSIS_SCHEMA, TRANSCRIPT_KEYS, AIAdapter, QuotaExceeded, analysis_schema
 
 
 class Blocked(Exception):
@@ -49,7 +48,7 @@ def _generate(client, models: list[str], contents, cfg):
     """Return (resp, model). Raises Blocked on a content-filter refusal, RuntimeError if all models fail."""
     quota_hits = 0
     for m in models:
-        print(f"analyzing with {m}...", flush=True)
+        print(f"asking {m}...", flush=True)
         try:
             resp = _retry(lambda: client.models.generate_content(model=m, contents=contents, config=cfg),
                           f"generate[{m}]", tries=2)
@@ -90,14 +89,6 @@ class GoogleAIAdapter(AIAdapter):
         names = {m.name.removeprefix("models/") for m in client.models.list()}
         missing = [m for m in self.cfg["models"] if m not in names]
         return f"{len(names)} models visible" + (f"; NOT available to this key: {missing}" if missing else "")
-
-    def generate_text(self, prompt: str) -> str:
-        client = self._client(120_000)
-        try:
-            resp, _ = _generate(client, self.cfg["models"], [prompt], types.GenerateContentConfig(temperature=0.3))
-        except Blocked as e:
-            raise RuntimeError(f"the AI refused to answer ({e})") from e
-        return resp.text.strip()
 
     def generate_json(self, prompt: str, schema: dict) -> dict:
         client = self._client(120_000)

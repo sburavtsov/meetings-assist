@@ -4,3 +4,6 @@ __pycache__/
 *.log
 secrets.json
 !examples/secrets.json
+state.db*
+*.lock
+.pytest_cache/

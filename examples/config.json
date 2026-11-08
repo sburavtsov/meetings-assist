@@ -4,7 +4,8 @@
     "speech_tracks": [
       1,
       2
-    ]
+    ],
+    "skip_open_files": true
   },
   "ai": {
     "speakers": "Alice (the user), Bob",
@@ -14,7 +15,8 @@
     "group": "-1001234567890",
     "chat": "123",
     "approver": "123456789",
-    "project_name": "My Project"
+    "project_name": "My Project",
+    "language": "ru"
   },
   "tasks": {
     "project": "My Project",
@@ -37,6 +39,9 @@
       "987654321"
     ],
     "max_items": 100,
-    "include_open_questions": true
+    "include_open_questions": true,
+    "review": true,
+    "review_tasks": true,
+    "max_age_days": 7
   }
 }

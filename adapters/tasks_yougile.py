@@ -15,8 +15,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-import secrets_config
 import plan as plan_mod
+import secrets_config
 import settings
 from adapters.base import Card, TaskAdapter
 
@@ -163,6 +163,13 @@ class YougileAdapter(TaskAdapter):
                 "evidence_quote": t.get("evidence_quote", "")})
             out.append(Card(tt, tb, who))
         return out
+
+    def add_note(self, stem: str, title: str, text: str) -> str:
+        """A card with a long plain text (the full follow-up when it does not fit into one messenger message)."""
+        col = self._resolve(create=True)
+        body = "".join(f"<p>{esc(par).replace(chr(10), '<br>')}</p>" for par in text.split("\n\n"))
+        return self._api("POST", "/tasks", {"title": title, "columnId": col, "description": body,
+                                            "idempotencyKey": _idem("note", stem, title)})["id"]
 
     def push(self, stem: str, analysis: dict) -> dict:
         cards = self.preview(stem, analysis)          # render first: a layout error fails before anything is created

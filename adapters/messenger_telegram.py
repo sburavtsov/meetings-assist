@@ -13,18 +13,20 @@ import urllib.parse
 import urllib.request
 
 import secrets_config
+from texts import t
 from adapters.base import Decision, IncomingMessage, MessengerAdapter, Updates
 
 
 class TelegramAdapter(MessengerAdapter):
     name = "telegram"
+    max_length = 4096                                    # Telegram's limit for one message
 
-    def _call(self, method: str, params: dict | None = None):
+    def _call(self, method: str, params: dict | None = None, timeout: int = 30):
         token = secrets_config.get("TELEGRAM_BOT_TOKEN")
         url = f"https://api.telegram.org/bot{token}/{method}"
         data = urllib.parse.urlencode(params or {}).encode()
         try:
-            with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=30) as r:
+            with urllib.request.urlopen(urllib.request.Request(url, data=data), timeout=timeout) as r:
                 return json.load(r)["result"]
         except urllib.error.HTTPError as e:
             raise RuntimeError(f"Telegram {method} -> {e.code}: {e.read().decode()[:300]}") from e
@@ -62,29 +64,30 @@ class TelegramAdapter(MessengerAdapter):
 
     def ask_approval(self, approval_id: str, preview: str) -> str:
         kb = {"inline_keyboard": [[
-            {"text": "✅ Отправить", "callback_data": f"send:{approval_id}"},
-            {"text": "✖ Не отправлять", "callback_data": f"skip:{approval_id}"}]]}
+            {"text": t("approval.send"), "callback_data": f"send:{approval_id}"},
+            {"text": t("approval.skip"), "callback_data": f"skip:{approval_id}"}]]}
         res = self._call("sendMessage", {
             "chat_id": self._approver, "reply_markup": json.dumps(kb), "disable_web_page_preview": "true",
-            "text": f"Предпросмотр — уйдёт в группу после подтверждения:\n\n{preview}"})
+            "text": preview})
         return str(res["message_id"])
 
-    def poll(self, want_messages: bool = False) -> Updates:
+    def poll(self, want_messages: bool = False, wait: int = 0) -> Updates:
         """By default only button taps are requested, so group chatter is never read. With `want_messages` Telegram
         also delivers every message the bot can see (it is an admin of the group, so that includes the group's):
         everything that is not a private chat message is dropped right here, unread and unstored."""
-        off_file = self.state_dir / ".telegram_offset"
         kinds = ["callback_query"] + (["message"] if want_messages else [])
-        params = {"timeout": 0, "allowed_updates": json.dumps(kinds)}
-        if off_file.exists():
-            params["offset"] = off_file.read_text().strip()
+        params = {"timeout": int(wait), "allowed_updates": json.dumps(kinds)}
+        if off := self.state.get("telegram.offset"):
+            params["offset"] = off
         decisions, messages = [], []
-        for u in self._call("getUpdates", params):
-            off_file.write_text(str(u["update_id"] + 1))
+        updates = self._call("getUpdates", params, timeout=int(wait) + 20)
+        if updates:                                      # one write per batch; Telegram drops what is before the offset
+            self.state.set("telegram.offset", str(updates[-1]["update_id"] + 1))
+        for u in updates:
             cq = u.get("callback_query")
             if cq:
                 if str(cq["from"]["id"]) != self._approver:
-                    self._quiet("answerCallbackQuery", {"callback_query_id": cq["id"], "text": "Нет доступа"})
+                    self._quiet("answerCallbackQuery", {"callback_query_id": cq["id"], "text": t("approval.no_access")})
                     continue
                 action, _, aid = cq.get("data", "").partition(":")
                 if action in ("send", "skip"):
@@ -98,7 +101,9 @@ class TelegramAdapter(MessengerAdapter):
         return Updates(decisions, messages)
 
     def reply(self, to: IncomingMessage, text: str) -> None:
-        self._call("sendMessage", {"chat_id": to.chat_ref, "text": text[:4000], "disable_web_page_preview": "true"})
+        for i in range(0, len(text), self.max_length):    # a long reply goes as several messages
+            self._call("sendMessage", {"chat_id": to.chat_ref, "text": text[i:i + self.max_length],
+                                       "disable_web_page_preview": "true"})
 
     def acknowledge(self, decision: Decision, note: str) -> None:
         cq = decision.ref
