@@ -21,8 +21,28 @@ Another product is one new adapter; the pipeline does not change (see [Architect
 Product-specific details are collected in [Included adapters](#included-adapters).
 
 ## Requirements
-macOS or Linux, [`uv`](https://docs.astral.sh/uv/), `ffmpeg` + `ffprobe`. (`brew install uv ffmpeg`)
-The login-service installer is macOS (launchd) only; everything else is portable.
+[`uv`](https://docs.astral.sh/uv/), `ffmpeg` + `ffprobe`, and `lsof` (preinstalled on macOS and most Linux systems).
+
+| Platform | Status |
+|---|---|
+| **macOS** | Main platform: used daily, tested in CI. `brew install uv ffmpeg`; `tools/install_service.py` runs the watcher at login (launchd). |
+| **Linux** | Supported: the test suite runs on Ubuntu in CI, but it is not used day to day there. No service installer: run `uv run meetings.py watch` under systemd (below) or in `tmux`. |
+| **Windows** | Not supported natively (the process lock and the open-file check are Unix-only). Use **WSL**, where it runs as on Linux. |
+
+Linux service (systemd user unit; replace the paths):
+```ini
+# ~/.config/systemd/user/meetings-assist.service
+[Unit]
+Description=meetings-assist watcher
+
+[Service]
+ExecStart=%h/.local/bin/uv run -q /path/to/meetings-assist/meetings.py watch
+Restart=always
+
+[Install]
+WantedBy=default.target
+```
+`systemctl --user enable --now meetings-assist` · log: `journalctl --user -u meetings-assist -f`
 
 ## Setup
 ```bash
