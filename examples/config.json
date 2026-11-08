@@ -1,0 +1,31 @@
+{
+  "watch": {
+    "dir": "~/Meetings",
+    "speech_tracks": [1, 2]
+  },
+  "ai": {
+    "speakers": "Alice (the user), Bob",
+    "context": "Weekly sync of a two-person game studio"
+  },
+  "messenger": {
+    "group": "-1001234567890",
+    "chat": "123",
+    "approver": "123456789",
+    "project_name": "My Project"
+  },
+  "tasks": {
+    "project": "My Project",
+    "board": "Meetings",
+    "column": "Incoming",
+    "create_missing": false,
+    "assignees": {
+      "Alice": "alice@example.com",
+      "Bob": "bob@example.com"
+    },
+    "adapters": {
+      "yougile": {
+        "company_id": "00000000-0000-0000-0000-000000000000"
+      }
+    }
+  }
+}

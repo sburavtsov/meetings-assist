@@ -1,0 +1,52 @@
+{
+  "meeting": {
+    "title": "Meeting {stem}",
+    "blocks": [
+      {
+        "when": "summary",
+        "html": "<h2>Summary</h2><p>{summary}</p>"
+      },
+      {
+        "when": "decisions",
+        "html": "<h2>Decisions</h2><ul>{items}</ul>",
+        "item": "<li>{decision}[[made_by: <em>({made_by})</em>]][[evidence_quote:<br><em>«{evidence_quote}»</em>]]</li>"
+      },
+      {
+        "when": "open_questions",
+        "html": "<h2>Open questions</h2><ul>{items}</ul>",
+        "item": "<li>{value}</li>"
+      },
+      {
+        "when": "gaps",
+        "html": "<p>⚠ Parts of the recording were not processed (content filter).</p>"
+      },
+      {
+        "html": "<p><em>Source: {stem}</em></p>"
+      }
+    ]
+  },
+  "task": {
+    "title": "{title}",
+    "blocks": [
+      {
+        "when": "description",
+        "html": "<p>{description}</p>"
+      },
+      {
+        "html": "<p><strong>Assignee:</strong> {assignee}</p>"
+      },
+      {
+        "when": "deadline",
+        "html": "<p><strong>Deadline (as said):</strong> {deadline}</p>"
+      },
+      {
+        "when": "low_confidence",
+        "html": "<p>⚠ low confidence</p>"
+      },
+      {
+        "when": "evidence_quote",
+        "html": "<p><em>«{evidence_quote}»</em></p>"
+      }
+    ]
+  }
+}

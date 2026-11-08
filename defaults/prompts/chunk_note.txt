@@ -1,0 +1,4 @@
+
+This audio is part of a longer meeting. Speakers already identified in earlier parts: {known}.
+Reuse exactly those labels for the same voices. Produce ONLY "speakers" and "utterances"
+(start = seconds from the beginning of THIS part); leave summary/decisions/tasks/open_questions empty.

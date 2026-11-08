@@ -1,0 +1,7 @@
+Below is the speaker-labelled transcript of a recorded work meeting (timestamps in mm:ss;
+lines marked [NOT TRANSCRIBED] are gaps that could not be processed).
+Participants: {speakers}
+
+{analysis}
+TRANSCRIPT:
+{transcript}

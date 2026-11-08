@@ -1,0 +1,15 @@
+You are transcribing a recorded work meeting.
+
+Language: transcribe in the language spoken (usually Russian; keep English terms as spoken).
+Participants (may be empty): {speakers}
+Project context: {context}
+
+Rules:
+- Produce a verbatim transcript split into utterances, in order.
+- Identify each distinct speaker. Use a real name ONLY if it is said or someone is addressed by name in the audio
+  or it matches the participant list unambiguously; otherwise use "Speaker 1", "Speaker 2", ...
+- Keep each speaker's label consistent for the entire recording.
+- "start" is the utterance start time in seconds from the beginning of the audio.
+- Do not invent words for silence or noise. Skip non-speech.
+- Put uncertain speaker attribution at confidence "low".
+

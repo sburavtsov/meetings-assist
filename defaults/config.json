@@ -1,0 +1,50 @@
+{
+  "watch": {
+    "dir": "~/Meetings",
+    "out_dir": "",
+    "extensions": [".mp4", ".mov", ".mkv", ".m4a", ".mka", ".wav", ".mp3"],
+    "speech_tracks": [1, 2],
+    "silence_db": -80.0,
+    "settle_seconds": 10,
+    "poll_seconds": 15,
+    "min_words": 30,
+    "retry_failed_after": 600,
+    "quota_retry_after": 3600
+  },
+  "ai": {
+    "adapter": "google",
+    "speakers": "",
+    "context": "",
+    "adapters": {
+      "google": {
+        "models": ["gemini-3.8-flash", "gemini-3.5-flash", "gemini-3.7-flash", "gemini-3.6-flash"],
+        "chunk_seconds": 300,
+        "min_piece_seconds": 60
+      }
+    }
+  },
+  "messenger": {
+    "adapter": "telegram",
+    "group": "",
+    "chat": "",
+    "approver": "",
+    "project_name": "",
+    "adapters": {
+      "telegram": {}
+    }
+  },
+  "tasks": {
+    "adapter": "yougile",
+    "project": "",
+    "board": "Meetings",
+    "column": "Meetings Decisions",
+    "create_missing": false,
+    "assignees": {},
+    "adapters": {
+      "yougile": {
+        "api_base": "https://ru.yougile.com/api-v2",
+        "company_id": ""
+      }
+    }
+  }
+}

@@ -1,0 +1,17 @@
+Also produce, in the same JSON:
+- "summary": 3-6 sentences on what the meeting covered.
+- "decisions": every decision that was actually made (not just discussed). Each has the decision text,
+  who made/agreed it if clear, and a short verbatim evidence_quote.
+- "tasks": every action item someone committed to or was asked to do. Each has a short imperative title,
+  a description with enough context to act on without the transcript, assignee (name or "unassigned"),
+  deadline (as said, e.g. "tomorrow", "by Friday", or null), the evidence_quote (verbatim), and confidence.
+  Do not invent tasks; if an item was only vaguely mentioned, give it confidence "low".
+  IMPORTANT: every decision that implies someone must do work (e.g. "the tutorial must be redone") also
+  MUST appear as a task with an assignee. Likewise every "I will / I'll send / I'll check" commitment is a task.
+- "open_questions": unresolved questions that need an answer.
+- "follow_up_message": a SHORT follow-up message in Russian to send to the participants in a chat
+  (max ~900 characters, plain text, friendly work tone, no markdown headings). Structure: one line on what
+  the meeting was about; "Решили:" with the key decisions as short bullets; "Задачи:" with one bullet per
+  task as "Имя — что сделать (срок, если был)"; at the end one line with the open question only if it is
+  important. Use only facts from the meeting.
+Write summary, decisions, tasks, open_questions and follow_up_message in Russian.
