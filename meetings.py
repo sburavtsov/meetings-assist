@@ -7,7 +7,7 @@
   uv run meetings.py process FILE [FILE...] [--force] [--no-push] [--no-message]   # manual
   uv run meetings.py watch [--no-push] [--no-message]                               # auto-tracking
   uv run meetings.py approvals          handle send / skip taps (and agenda messages) once
-  uv run meetings.py agenda add "item" | list | del 1 3 5-7 | assemble | clear    optional agenda step, locally (see agenda.py)
+  uv run meetings.py agenda add "item" | list | del 1 3 5-7 | assemble | clear | carry FILE    optional agenda step (see agenda.py)
   uv run meetings.py status             what is done / pending
   uv run meetings.py check [--online]   validate settings, prompts, card layout, adapters (--online: credentials)
   uv run meetings.py cards FILE         show the cards that would be created for an <stem>.analysis.json
@@ -21,6 +21,7 @@ defaults/config.json + ~/.meetings-assist/config.json; secrets in ~/.meetings-as
 
 Each step leaves a marker in <watch dir>/transcripts/:
   <stem>.analysis.json / .analysis.md   transcript + analysis
+  <stem>.carryover.json                 what the meeting left over for the next agenda (agenda.enabled)
   <stem>.tasks.json                     cards created in the task system
   <stem>.message.json                   follow-up state: pending / sent / skipped
   <stem>.skipped.json                   too little speech: tasks skipped on purpose
@@ -40,6 +41,7 @@ import adapters
 import agenda as agenda_mod
 import media
 import notify
+import plan as plan_mod
 import prompts
 import report
 import settings
@@ -127,7 +129,14 @@ def run_pipeline(path: Path, svc: Services, push: bool = True, force: bool = Fal
         with tempfile.TemporaryDirectory() as tmp:
             audio = Path(tmp) / "audio.m4a"
             media.extract_audio(path, tracks, audio)
-            data = svc.ai.analyze(audio, settings.S["ai"]["speakers"], settings.S["ai"]["context"])
+            plan = make_plan(path)
+            if plan:
+                print(f"  plan: {len(plan.get('agenda', []))} agenda points, {len(plan.get('tasks', []))} earlier tasks to check", flush=True)
+            data = svc.ai.analyze(audio, settings.S["ai"]["speakers"], settings.S["ai"]["context"], plan)
+        if plan:
+            data["plan"] = plan
+            plan_mod.verify(data, plan)
+            plan_mod.claim_agenda(out, plan, path.stem)
         aj.write_text(json.dumps(data, ensure_ascii=False, indent=2))
         marker(path, ".analysis.md").write_text(report.render_markdown(path.stem, data))
         words = sum(len(u["text"].split()) for u in data.get("utterances", []))
@@ -140,6 +149,8 @@ def run_pipeline(path: Path, svc: Services, push: bool = True, force: bool = Fal
     else:
         print("[1/3] analysis exists", flush=True)
         data = json.loads(aj.read_text())
+
+    carry_over(path.stem, data, svc)
 
     # 2. task system
     if not push:
@@ -156,6 +167,27 @@ def run_pipeline(path: Path, svc: Services, push: bool = True, force: bool = Fal
     if message:
         print(f"[3/3] message preview ({svc.notifier.m.name})", flush=True)
         svc.notifier.request(path.stem, data)
+
+
+def make_plan(path: Path) -> dict | None:
+    """What was planned for this meeting (agenda step only): the assembled agenda + the previous meeting's tasks."""
+    a = settings.S["agenda"]
+    if not (a["enabled"] and a["review"]):
+        return None
+    start = plan_mod.recording_time(path.stem, path.stat().st_mtime)
+    return plan_mod.build_plan(settings.out_dir(), path.stem, start, agenda=True, tasks=bool(a["review_tasks"]),
+                               max_age_days=a["max_age_days"])
+
+
+def carry_over(stem: str, data: dict, svc: Services, force: bool = False) -> None:
+    """Everything the meeting left over goes back into the agenda list - once per meeting (marker file)."""
+    a, mark = settings.S["agenda"], settings.out_dir() / f"{stem}.carryover.json"
+    if not a["enabled"] or (mark.exists() and not force):
+        return
+    points = plan_mod.carry_points(data, data.get("plan"), bool(a["include_open_questions"]))
+    added = svc.agenda.add_carryover(stem, points)
+    mark.write_text(json.dumps({"at": time.ctime(), "added": added, "points": points}, ensure_ascii=False, indent=2))
+    print(f"  agenda: {added} point(s) carried over to the next meeting", flush=True)
 
 
 _last_poll_error = ["", 0.0]
@@ -299,8 +331,11 @@ def cmd_agenda(args: list[str], svc: Services) -> None:
         print(svc.agenda.assemble())
     elif sub == "clear":
         print(svc.agenda.clear())
+    elif sub == "carry" and len(args) > 1:                 # redo / backfill the carry-over of an analysed meeting
+        stem, data = _analysis(args[1])
+        carry_over(stem, data, svc, force=True)
     else:
-        sys.exit('usage: meetings.py agenda add "item" ["item"...] | list | del 1 3 5-7 | assemble | clear')
+        sys.exit('usage: meetings.py agenda add "item" ["item"...] | list | del 1 3 5-7 | assemble | clear | carry FILE.analysis.json')
 
 
 def cmd_bot_commands(args: list[str], svc: Services) -> None:

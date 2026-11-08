@@ -17,6 +17,16 @@
         "item": "<li>{value}</li>"
       },
       {
+        "when": "not_discussed",
+        "html": "<h2>Not discussed (moved to the next meeting)</h2><ul>{items}</ul>",
+        "item": "<li>{value}</li>"
+      },
+      {
+        "when": "discussed_open",
+        "html": "<h2>Discussed, not resolved (moved to the next meeting)</h2><ul>{items}</ul>",
+        "item": "<li>{value}</li>"
+      },
+      {
         "when": "gaps",
         "html": "<p>⚠ Parts of the recording were not processed (content filter).</p>"
       },

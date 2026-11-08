@@ -4,7 +4,9 @@
   analysis.txt       (none)                            summary / decisions / tasks / follow-up rules
   analysis_only.txt  {speakers} {analysis} {transcript} used when the audio had to be chunked
   chunk_note.txt     {known}                           appended to every chunk's prompt
-  agenda.txt         {items} {previous} {speakers} {context}  assembles the meeting agenda from submitted items
+  agenda.txt         {items} {speakers} {context}      assembles the agenda (JSON points) from the saved items
+  agenda_review.txt  {agenda}                          appended when the meeting had a planned agenda
+  task_followup.txt  {tasks} {decisions}               appended when the previous meeting had tasks
 The JSON structure the AI must return is the contract in adapters/base.py, not part of the prompts.
 """
 from __future__ import annotations
@@ -15,7 +17,8 @@ import settings
 
 FIELDS = {"transcribe.txt": {"speakers", "context"}, "analysis.txt": set(),
           "analysis_only.txt": {"speakers", "analysis", "transcript"}, "chunk_note.txt": {"known"},
-          "agenda.txt": {"items", "speakers", "context", "previous"}}
+          "agenda.txt": {"items", "speakers", "context"},
+          "agenda_review.txt": {"agenda"}, "task_followup.txt": {"tasks", "decisions"}}
 
 
 def _load(name: str) -> str:
@@ -35,22 +38,34 @@ def transcribe(speakers: str, context: str) -> str:
     return _load("transcribe.txt").format(speakers=speakers or "unknown", context=context or "none")
 
 
-def whole(speakers: str, context: str) -> str:
-    """Transcribe + analyse in one request."""
-    return transcribe(speakers, context) + "\n" + analysis()
+def review(plan: dict | None) -> str:
+    """The blocks that make the AI check what happened to the plan (empty string without a plan)."""
+    plan, out = plan or {}, ""
+    if plan.get("agenda"):
+        out += "\n" + _load("agenda_review.txt").format(agenda="\n".join(f"{p['n']}. {p['text']}" for p in plan["agenda"]))
+    if plan.get("tasks"):
+        tasks = "\n".join(f"{t['n']}. {t['title']}" + (f" ({t['assignee']})" if t.get("assignee") else "") for t in plan["tasks"])
+        decisions = "\n".join(f"- {d}" for d in plan.get("decisions") or []) or "(none)"
+        out += "\n" + _load("task_followup.txt").format(tasks=tasks, decisions=decisions)
+    return out
+
+
+def whole(speakers: str, context: str, plan: dict | None = None) -> str:
+    """Transcribe + analyse in one request (+ the plan review, if there is a plan)."""
+    return transcribe(speakers, context) + "\n" + analysis() + review(plan)
 
 
 def chunk(speakers: str, context: str, known: list[str]) -> str:
     return transcribe(speakers, context) + _load("chunk_note.txt").format(known=", ".join(known) or "none yet")
 
 
-def analysis_only(speakers: str, transcript: str) -> str:
-    return _load("analysis_only.txt").format(speakers=speakers or "unknown", analysis=analysis(), transcript=transcript)
+def analysis_only(speakers: str, transcript: str, plan: dict | None = None) -> str:
+    return _load("analysis_only.txt").format(speakers=speakers or "unknown", analysis=analysis() + review(plan),
+                                             transcript=transcript)
 
 
-def agenda(items: str, previous: str, speakers: str, context: str) -> str:
-    return _load("agenda.txt").format(items=items, previous=previous or "none", speakers=speakers or "unknown",
-                                      context=context or "none")
+def agenda(items: str, speakers: str, context: str) -> str:
+    return _load("agenda.txt").format(items=items, speakers=speakers or "unknown", context=context or "none")
 
 
 def validate() -> None:

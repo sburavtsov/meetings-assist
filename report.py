@@ -39,6 +39,25 @@ def render_markdown(stem: str, data: dict) -> str:
         lines.append("(none)")
     if data.get("open_questions"):
         lines += ["", "## Open questions", ""] + [f"- {q}" for q in data["open_questions"]]
+    plan = data.get("plan") or {}
+    if data.get("agenda_review"):
+        texts = {p["n"]: p["text"] for p in plan.get("agenda") or []}
+        lines += ["", "## Agenda review", ""]
+        for r in data["agenda_review"]:
+            note = " _(downgraded: no matching quote)_" if r.get("downgraded") else ""
+            lines.append(f"- **{r['status']}** — {texts.get(r['n'], r['n'])}{note}")
+            for k in ("outcome", "evidence_quote"):
+                if r.get(k):
+                    lines.append(f"  {'>' if k == 'evidence_quote' else ' '} {r[k]}")
+        if data.get("unplanned"):
+            lines += ["", "Discussed but not planned: " + "; ".join(data["unplanned"])]
+    if data.get("task_followup"):
+        titles = {t["n"]: t["title"] for t in plan.get("tasks") or []}
+        lines += ["", f"## Follow-up on tasks from {plan.get('previous', 'the previous meeting')}", ""]
+        for r in data["task_followup"]:
+            lines.append(f"- **{r['status']}** — {titles.get(r['n'], r['n'])}" + (f": {r['note']}" if r.get("note") else ""))
+        for d in data.get("decisions_revisited") or []:
+            lines.append(f"- decision revisited: {d.get('decision')} → {d.get('change', '')}")
     if data.get("follow_up_message"):
         lines += ["", "## Follow-up message", "", data["follow_up_message"]]
     lines += ["", "## Transcript", ""]

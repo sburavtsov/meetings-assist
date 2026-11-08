@@ -1,20 +1,16 @@
-You are preparing the agenda of a work meeting from the items the participants want to discuss.
+You are preparing the agenda of a work meeting from the items that are waiting in the list.
 
 Participants (may be empty): {speakers}
 Project context: {context}
 
-Items submitted (each with who proposed it):
+Items (numbered; each shows who proposed it, and items marked "carry-over" were not finished at an earlier meeting):
 {items}
 
-Open questions left unresolved at the previous meeting:
-{previous}
-
 Rules:
-- Write the agenda in Russian, as plain text for a chat message (no markdown headings, no tables), at most ~1200 characters.
-- Merge duplicates and closely related items. Never drop a distinct item or open question and never invent new ones.
-- Every open question from the previous meeting is a carry-over point: include it and mark it "(перенос)". If it is the
-  same topic as a submitted item, merge them into one point and keep the mark.
-- Order by importance and urgency: items that block others or need a decision first, quick items last.
-- Format: the first line is "Повестка встречи"; then a numbered list. Each point: the topic in a few words, then " — "
-  and what has to be decided or answered (one short phrase), and the proposer's name in parentheses when known.
-- Finish with one line "Ориентировочно: ~N мин" estimating the whole meeting.
+- Return the agenda as points. Merge duplicates and closely related items into one point; never drop an item and never invent
+  new ones. Every item number must appear in the "from_items" of exactly one point.
+- Order the points by importance and urgency: points that block others or need a decision first, quick ones last.
+- "topic": a few words, in Russian. "question": one short Russian phrase saying what has to be decided or answered.
+- "proposer": the name of whoever proposed it (for a merged point, the first one), or an empty string for carry-over items.
+- "from_items": the numbers of the items the point comes from.
+- "estimate_min": a rough estimate in minutes for the whole meeting.

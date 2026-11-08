@@ -13,7 +13,8 @@ from google.genai import types
 import media
 import prompts
 import secrets_config
-from adapters.base import ANALYSIS_KEYS, ANALYSIS_SCHEMA, TRANSCRIPT_KEYS, AIAdapter, QuotaExceeded
+from adapters.base import (ANALYSIS_KEYS, ANALYSIS_SCHEMA, TRANSCRIPT_KEYS, AIAdapter, QuotaExceeded, analysis_schema,
+                           review_keys)
 
 
 class Blocked(Exception):
@@ -98,6 +99,15 @@ class GoogleAIAdapter(AIAdapter):
             raise RuntimeError(f"the AI refused to answer ({e})") from e
         return resp.text.strip()
 
+    def generate_json(self, prompt: str, schema: dict) -> dict:
+        client = self._client(120_000)
+        cfg = types.GenerateContentConfig(response_mime_type="application/json", response_schema=schema, temperature=0.2)
+        try:
+            resp, _ = _generate(client, self.cfg["models"], [prompt], cfg)
+        except Blocked as e:
+            raise RuntimeError(f"the AI refused to answer ({e})") from e
+        return json.loads(resp.text)
+
     # ---- chunked fallback -------------------------------------------------------------------
     def _chunked(self, client, audio: Path, dur: float, speakers: str, context: str):
         """Transcribe in pieces when the whole file is refused. Returns (utterances, speakers, gaps)."""
@@ -140,7 +150,7 @@ class GoogleAIAdapter(AIAdapter):
         return utterances, [{"label": k} for k in known], sorted(gaps)
 
     # ---- main entry -------------------------------------------------------------------------
-    def analyze(self, audio: Path, speakers: str, context: str) -> dict:
+    def analyze(self, audio: Path, speakers: str, context: str, plan: dict | None = None) -> dict:
         models = self.cfg["models"]
         dur = media.duration(audio)
         # Per-request timeout: generous for long audio, short enough to fall back from a hung model.
@@ -149,10 +159,10 @@ class GoogleAIAdapter(AIAdapter):
         f = _upload(client, audio)
         t0 = time.time()
         cfg = types.GenerateContentConfig(response_mime_type="application/json",
-                                          response_schema=ANALYSIS_SCHEMA, temperature=0.0)
+                                          response_schema=analysis_schema(plan), temperature=0.0)
         gaps: list = []
         try:
-            resp, used = _generate(client, models, [f, prompts.whole(speakers, context)], cfg)
+            resp, used = _generate(client, models, [f, prompts.whole(speakers, context, plan)], cfg)
             data = json.loads(resp.text)
         except Blocked as e:
             print(f"whole file refused ({e}); falling back to chunks", flush=True)
@@ -165,9 +175,8 @@ class GoogleAIAdapter(AIAdapter):
             text = "\n".join(sorted(text.split("\n")))
             a_cfg = types.GenerateContentConfig(
                 response_mime_type="application/json", temperature=0.0,
-                response_schema={"type": "object",
-                                 "properties": {k: ANALYSIS_SCHEMA["properties"][k] for k in ANALYSIS_KEYS}})
-            resp, used = _generate(client, models, [prompts.analysis_only(speakers, text)], a_cfg)
+                response_schema=analysis_schema(plan, only=ANALYSIS_KEYS))
+            resp, used = _generate(client, models, [prompts.analysis_only(speakers, text, plan)], a_cfg)
             data = json.loads(resp.text)
             data["utterances"], data["speakers"] = utts, spk
         finally:

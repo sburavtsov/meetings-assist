@@ -1,0 +1,18 @@
+PLANNED AGENDA of this meeting (assembled before it; numbered):
+{agenda}
+
+Also produce "agenda_review": exactly one entry per planned point, in the same order, none omitted:
+- "n": the point's number
+- "status": exactly one of
+    "resolved"        an answer, decision or plan was agreed, or someone took the follow-up action on it
+                      (the action itself may still be pending: it is then listed in "tasks")
+    "discussed_open"  discussed substantively but left undecided, or explicitly postponed after the discussion
+    "partial"         only briefly touched, or only part of the point was covered
+    "not_discussed"   not talked about; a passing mention of a keyword is NOT a discussion
+- "outcome": one short Russian sentence: what was concluded, or what is still open (null for not_discussed)
+- "evidence_quote": a short verbatim quote from the meeting proving the discussion (required unless not_discussed)
+Judge by what was actually said, not by the order of the agenda and not by the summary you wrote. A topic that was
+mentioned and then explicitly postponed is not "resolved". If you really cannot tell whether anything was agreed, choose
+discussed_open; if unsure between partial and not_discussed, choose not_discussed. Losing a topic is worse than
+raising it twice.
+Also produce "unplanned": significant topics that were discussed but were not on the agenda (short Russian phrases).

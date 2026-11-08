@@ -67,6 +67,9 @@
     "enabled": false,
     "contributors": [],
     "max_items": 100,
-    "include_open_questions": true
+    "include_open_questions": true,
+    "review": true,
+    "review_tasks": true,
+    "max_age_days": 7
   }
 }

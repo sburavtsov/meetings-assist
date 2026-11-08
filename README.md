@@ -72,13 +72,33 @@ Every line is one item. Commands (they share the `agenda_` prefix, so they form 
 The names are one table (`COMMANDS` in `agenda.py`), so renaming is a one-line change.
 A message that consists only of numbers ("1, 2, 3") is never added as an item; the bot points to `/agenda_del` instead
 (add such an item explicitly with `/agenda_add 2026`).
-**Open questions** of the newest analysed meeting are added when the agenda is assembled, marked "(перенос)" and merged with
-submitted items on the same topic (`/list` shows them; turn off with `agenda.include_open_questions: false`).
+**After the meeting** the recording is checked against the plan (see below): whatever was not resolved comes back into the
+list as a carry-over item, marked "(перенос)" (`×2`, `×3` … for repeats). `/agenda_list` shows them, `/agenda_del` removes them.
 
 Enable it in `config.json`: `"agenda": {"enabled": true, "contributors": ["<telegram user id>"]}` (the approver is always
 allowed; `uv run meetings.py discover` shows ids). Agendas are saved under `<watch dir>/transcripts/agendas/`.
 The prompt is `prompts/agenda.txt` (overridable like the others). You can also use it without the bot:
-`uv run meetings.py agenda add "item" | list | del 1 3 5-7 | assemble | clear`.
+`uv run meetings.py agenda add "item" | list | del 1 3 5-7 | assemble | clear | carry FILE.analysis.json`.
+
+### Did we discuss what we planned? (agenda review and carry-over)
+With the agenda step enabled, each recording is analysed **together with what was planned**:
+- the newest assembled agenda made before the recording started (not older than `agenda.max_age_days`, claimed by one
+  meeting only), and
+- the tasks and decisions of the previous meeting (`agenda.review_tasks`).
+
+The AI only **classifies** what happened to each point, with a verbatim quote: `resolved`, `discussed_open`, `partial`,
+`not_discussed` (tasks: `done`, `in_progress`, `blocked`, `not_mentioned`). Plain code then decides, so the outcome is predictable:
+- a quote that is not found in the transcript is not trusted: `resolved` becomes `discussed_open`, `done` / `in_progress`
+  become `not_mentioned` - a topic is never lost because the AI was over-optimistic;
+- everything except `resolved` goes to the next agenda, together with the meeting's open questions and the tasks that
+  were `blocked` or `not_mentioned` ("Статус по задаче: …"); each carry increases a counter, and from the third time the agenda
+  says "переносится в 3-й раз: решить или убрать";
+- the follow-up message gets "Не успели обсудить" / "Обсудили, но не решили" (you see it in the private preview), the
+  meeting card in the task tracker gets the same lists, and `<stem>.analysis.md` has the full review with quotes;
+- topics that were discussed but not planned stay in the local analysis only.
+
+Prompts: `prompts/agenda_review.txt`, `prompts/task_followup.txt`. Without an agenda and without earlier tasks nothing changes.
+Redo the carry-over of an old analysis with `uv run meetings.py agenda carry FILE.analysis.json`.
 
 **Privacy:** by default the bot only asks Telegram for button taps and never reads chat messages. With the agenda enabled it
 must also receive messages; Telegram then delivers every message the bot can see, including the group's if the bot is an
@@ -95,7 +115,7 @@ admin there. The adapter drops everything that is not a private chat message imm
 
 Main settings: `watch.*` (folder, file types, which audio tracks are speech, timings), `ai.speakers` / `ai.context`,
 `tasks.project` / `board` / `column` / `assignees` / `create_missing`, `messenger.group` / `chat` / `approver` / `project_name`,
-`agenda.enabled` / `contributors` / `max_items` / `include_open_questions`.
+`agenda.enabled` / `contributors` / `max_items` / `include_open_questions` / `review` / `review_tasks` / `max_age_days`.
 See [`examples/config.json`](examples/config.json) and [`defaults/config.json`](defaults/config.json).
 
 The OBS multi-track layout is assumed by default (track 0 = mix, 1 = mic, 2 = system audio); change `watch.speech_tracks`
@@ -104,7 +124,7 @@ for other setups. Silent tracks are detected and skipped.
 ## Architecture
 ```
 meetings.py        CLI + watcher          notify.py   follow-up message + approval workflow
-agenda.py          optional agenda step
+agenda.py          optional agenda step      plan.py   what was planned vs what happened (review, carry-over)
 media.py           ffmpeg helpers         prompts.py  prompt loading + placeholder checks
 report.py          markdown report        settings.py / secrets_config.py   layered config / secrets
 adapters/

@@ -1,0 +1,18 @@
+TASKS AGREED AT THE PREVIOUS MEETING (numbered; the name is who committed to it):
+{tasks}
+
+DECISIONS MADE AT THE PREVIOUS MEETING:
+{decisions}
+
+Also produce "task_followup": exactly one entry per task above, in the same order, none omitted:
+- "n": the task's number
+- "status": exactly one of
+    "done"           said to be finished or delivered
+    "in_progress"    work was reported but it is not finished
+    "blocked"        cannot proceed, or waiting for something
+    "not_mentioned"  the task was not talked about at all
+- "note": one short Russian sentence with what was actually said about it (null for not_mentioned)
+- "evidence_quote": a short verbatim quote proving it (required unless not_mentioned)
+Never infer a status from the general mood or from other tasks: if nobody mentions it, it is "not_mentioned".
+Also produce "decisions_revisited": previous decisions that were questioned, changed or reversed in this meeting. Each has
+"decision" (as written above), "change" (one short Russian sentence: what changed) and "evidence_quote". Empty list if none.

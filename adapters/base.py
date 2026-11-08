@@ -63,6 +63,36 @@ ANALYSIS_SCHEMA = {'type': 'object',
  'required': ['utterances']}
 TRANSCRIPT_KEYS = ("speakers", "utterances")
 ANALYSIS_KEYS = ("summary", "decisions", "tasks", "open_questions", "follow_up_message")
+
+# Added to the schema only when the meeting has a plan (see AIAdapter.analyze):
+_S = lambda t, **k: {"type": t, **k}
+REVIEW_PROPERTIES = {
+    "agenda_review": _S("array", items=_S("object", properties={
+        "n": _S("integer"),
+        "status": _S("string", enum=["resolved", "discussed_open", "partial", "not_discussed"]),
+        "outcome": _S("string", nullable=True), "evidence_quote": _S("string", nullable=True)}, required=["n", "status"])),
+    "unplanned": _S("array", items=_S("string")),
+    "task_followup": _S("array", items=_S("object", properties={
+        "n": _S("integer"),
+        "status": _S("string", enum=["done", "in_progress", "blocked", "not_mentioned"]),
+        "note": _S("string", nullable=True), "evidence_quote": _S("string", nullable=True)}, required=["n", "status"])),
+    "decisions_revisited": _S("array", items=_S("object", properties={
+        "decision": _S("string"), "change": _S("string"), "evidence_quote": _S("string")}, required=["decision"])),
+}
+
+
+def review_keys(plan: dict | None) -> tuple:
+    """Schema keys the plan adds: an agenda adds the agenda review, previous tasks add the task follow-up."""
+    plan = plan or {}
+    return (("agenda_review", "unplanned") if plan.get("agenda") else ()) + \
+           (("task_followup", "decisions_revisited") if plan.get("tasks") else ())
+
+
+def analysis_schema(plan: dict | None = None, only: tuple | None = None) -> dict:
+    """ANALYSIS_SCHEMA (optionally restricted to `only` keys) plus the review keys the plan asks for."""
+    props = {k: v for k, v in ANALYSIS_SCHEMA["properties"].items() if only is None or k in only}
+    props.update({k: REVIEW_PROPERTIES[k] for k in review_keys(plan)})
+    return {**ANALYSIS_SCHEMA, "properties": props}
 # Besides the schema fields, an adapter adds:  "gaps": [[start_s, end_s], ...]  (stretches it could not process)
 #                                              "ai": {"adapter": <name>, "model": <model used>}
 
@@ -75,8 +105,18 @@ class AIAdapter(ABC):
         self.cfg = section["adapters"][self.name]    # this adapter's own settings
 
     @abstractmethod
-    def analyze(self, audio: Path, speakers: str, context: str) -> dict:
-        """`audio` is a compact mono audio file prepared by the pipeline. Returns the analysis dict."""
+    def analyze(self, audio: Path, speakers: str, context: str, plan: dict | None = None) -> dict:
+        """`audio` is a compact mono audio file prepared by the pipeline. Returns the analysis dict.
+
+        `plan` (optional) says what was planned before the meeting, so the AI can check what happened to it:
+          {"agenda": [{"n": 1, "text": "..."}], "tasks": [{"n": 1, "title": "...", "assignee": "..."}],
+           "decisions": ["..."]}
+        An adapter must then add the keys named by review_keys(plan) to its answer, using analysis_schema(plan).
+        """
+
+    def generate_json(self, prompt: str, schema: dict) -> dict:
+        """Structured answer to a text prompt (used by the optional agenda step)."""
+        raise NotImplementedError(f"{self.name} adapter does not support generate_json")
 
     def generate_text(self, prompt: str) -> str:
         """Plain text answer to a text prompt (used by the optional agenda step)."""

@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 
 import secrets_config
+import plan as plan_mod
 import settings
 from adapters.base import Card, TaskAdapter
 
@@ -147,9 +148,11 @@ class YougileAdapter(TaskAdapter):
 
     # ---- cards ----------------------------------------------------------------------------
     def preview(self, stem: str, analysis: dict) -> list[Card]:
+        left = plan_mod.leftover(analysis)
         title, body = render_card(self.cards["meeting"], {
             "stem": stem, "summary": analysis.get("summary", ""), "decisions": analysis.get("decisions") or [],
-            "open_questions": analysis.get("open_questions") or [], "gaps": analysis.get("gaps") or []})
+            "open_questions": analysis.get("open_questions") or [], "gaps": analysis.get("gaps") or [],
+            "not_discussed": left["not_discussed"], "discussed_open": left["open"]})
         out = [Card(title, body)]
         for t in analysis.get("tasks", []):
             who = t.get("assignee") or "unassigned"

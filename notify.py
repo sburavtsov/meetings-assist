@@ -12,6 +12,7 @@ import json
 import re
 from pathlib import Path
 
+import plan as plan_mod
 from adapters.base import MessengerAdapter
 
 
@@ -26,8 +27,23 @@ def short(text: str, n: int = 90) -> str:
     return text if len(text) <= n else text[: n - 1].rsplit(" ", 1)[0] + "…"
 
 
+def leftover_block(data: dict) -> str:
+    """'Не успели обсудить / Обсудили, но не решили' - what of the planned agenda goes to the next meeting."""
+    left = plan_mod.leftover(data)
+    parts = []
+    for key, title in (("not_discussed", "Не успели обсудить:"), ("open", "Обсудили, но не решили:")):
+        if left[key]:
+            parts.append(title + "\n" + "\n".join(f"• {short(t, 100)}" for t in left[key]))
+    return ("\n\n" + "\n\n".join(parts) + "\n\nЭти пункты перенесены в повестку следующей встречи.") if parts else ""
+
+
 def build_message(data: dict, stem: str, project_name: str) -> str:
-    """The AI's own short follow-up; if it is missing, a compact one built from decisions and tasks."""
+    """The AI's own short follow-up; if it is missing, a compact one built from decisions and tasks.
+    A reviewed agenda adds what was left over (deterministic, not written by the AI)."""
+    return _message(data, stem, project_name) + leftover_block(data)
+
+
+def _message(data: dict, stem: str, project_name: str) -> str:
     head = header(stem, project_name)
     if data.get("follow_up_message"):
         return (head + "\n\n" if head else "") + data["follow_up_message"].strip()
