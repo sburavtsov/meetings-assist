@@ -92,8 +92,15 @@ follow-up, the items that agenda was made of leave the list and whatever was not
 marked "(перенос)" (`×2`, `×3` … for repeats); items sent after the agenda was assembled stay. When you tap **Don't send**
 (e.g. a test recording), the list is left as it was and the agenda is free for the next recording.
 
-Enable it in `config.json`: `"agenda": {"enabled": true, "contributors": ["<telegram user id>"]}` (the approver is always
-allowed; `uv run meetings.py discover` shows ids).
+Enable it in `config.json`: `"agenda": {"enabled": true, "contributors": ["@kostya", "123456789"]}`. The approver is always
+allowed. Each person presses **Start** in the bot once (a bot cannot write first).
+- **`@nickname`**: the first account that writes to the bot with that nickname is pinned to it (the pairing is kept in the
+  local state and logged). After that only that account counts: it keeps access after renaming, and someone who later takes
+  the old nickname is refused. Removing the nickname from the list revokes access.
+- **user id** (digits): exact, works without a nickname. Find it with @userinfobot, or `uv run meetings.py discover` while
+  the watcher is stopped.
+
+Contributors can add, list, delete and clear items and assemble the agenda; only the approver can send the follow-up.
 The prompt is `prompts/agenda.txt` (overridable like the others). You can also use it without the bot:
 `uv run meetings.py agenda add "item" | list | del 1 3 5-7 | assemble | clear | carry FILE.analysis.json`.
 

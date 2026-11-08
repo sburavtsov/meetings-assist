@@ -47,6 +47,12 @@ _NUMBERS = re.compile(r"^[\d\s,;.\-–—]+$")
 _RANGE = re.compile(r"(\d+)(?:[-–—](\d+))?")
 
 
+def nickname(s: str) -> str:
+    """'@Kostya' / 'kostya' -> '@kostya' (Telegram nicknames are case-insensitive); '' stays ''."""
+    s = (s or "").strip().lstrip("@").lower()
+    return "@" + s if s else ""
+
+
 def parse_items(text: str) -> list[str]:
     """One item per non-empty line; leading bullets / numbering are stripped."""
     return [b for line in text.splitlines() if (b := _BULLET.sub("", line).strip())]
@@ -119,8 +125,33 @@ def structure(raw: dict, items: list[dict]) -> list[dict]:
 
 class Agenda:
     def __init__(self, ai: AIAdapter, store: Store, allowed: set[str], max_items: int, speakers: str, context: str):
-        self.ai, self.db, self.allowed, self.max = ai, store, allowed, max_items
+        """`allowed`: user ids and/or "@nickname" entries (see may_use)."""
+        self.ai, self.db, self.max = ai, store, max_items
+        self.allowed = allowed
         self.speakers, self.context = speakers, context
+
+    @property
+    def allowed(self) -> set[str]:
+        return self._ids | self._names
+
+    @allowed.setter
+    def allowed(self, entries) -> None:
+        entries = {str(e).strip() for e in entries} - {""}
+        self._names = {nickname(e) for e in entries if e.startswith("@")}
+        self._ids = entries - {e for e in entries if e.startswith("@")}
+
+    def may_use(self, msg: IncomingMessage) -> bool:
+        """Ids are trusted as they are. A listed @nickname is pinned to the account that writes with it first; from then
+        on only that account counts (it keeps access after renaming; someone who takes the old nickname does not)."""
+        if msg.sender_id in self._ids:
+            return True
+        if any(self.db.pinned(n) == msg.sender_id for n in self._names):
+            return True
+        name = nickname(msg.sender_username)
+        if name in self._names and self.db.pinned(name) is None and self.db.pin(name, msg.sender_id):
+            print(f"  agenda: contributor {name} -> user id {msg.sender_id} (pinned on first message)", flush=True)
+            return True
+        return False
 
     # ---- chat operations (each returns the reply text) ---------------------------------------------
     def add(self, sender_id: str, name: str, text: str) -> str:
@@ -230,7 +261,7 @@ class Agenda:
 
     # ---- chat entry point -----------------------------------------------------------------------------
     def answer(self, msg: IncomingMessage) -> str:
-        if msg.sender_id not in self.allowed:
+        if not self.may_use(msg):
             return t("agenda.no_access")
         text = msg.text.strip()
         if text.startswith("/"):

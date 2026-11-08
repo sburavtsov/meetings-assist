@@ -138,6 +138,7 @@ class IncomingMessage:
     sender_name: str
     text: str
     chat_ref: str                                    # adapter-private: where to reply
+    sender_username: str = ""                        # the sender's public nickname without "@", if they have one
 
 
 @dataclass

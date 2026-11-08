@@ -11,6 +11,7 @@ Tables
   agendas   every assembled agenda: points (with the item ids they came from), state: open | replaced | reserved | used
   carry     per meeting: the leftovers waiting for the follow-up decision (pending | applied | discarded)
   kv        small adapter state (e.g. the Telegram update offset)
+  contacts  nickname -> user id, pinned on the first message of a contributor listed by @nickname
 """
 from __future__ import annotations
 
@@ -34,6 +35,7 @@ CREATE TABLE IF NOT EXISTS agendas (
 CREATE TABLE IF NOT EXISTS carry (
     stem TEXT PRIMARY KEY, status TEXT NOT NULL, points TEXT NOT NULL, agenda_id INTEGER, at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS contacts (username TEXT PRIMARY KEY, sender_id TEXT NOT NULL, at REAL NOT NULL);
 """
 
 
@@ -117,6 +119,17 @@ class Store:
     def clear_items(self) -> int:
         with self._db() as db:
             return db.execute("DELETE FROM items").rowcount
+
+    # ---- contributors listed by nickname: pinned to the account that used it first ---------------------
+    def pinned(self, username: str) -> str | None:
+        with self._db() as db:
+            r = db.execute("SELECT sender_id FROM contacts WHERE username=?", (username,)).fetchone()
+        return r["sender_id"] if r else None
+
+    def pin(self, username: str, sender_id: str) -> bool:
+        """Pin `username` to `sender_id` unless it is pinned already. Returns True if this call pinned it."""
+        with self._db() as db:
+            return db.execute("INSERT OR IGNORE INTO contacts VALUES(?, ?, ?)", (username, sender_id, time.time())).rowcount == 1
 
     # ---- pending question per sender --------------------------------------------------------------
     def pending(self, sender_id: str) -> str | None:

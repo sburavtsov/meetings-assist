@@ -97,7 +97,7 @@ class TelegramAdapter(MessengerAdapter):
             if (want_messages and m and (m.get("chat") or {}).get("type") == "private"
                     and not (m.get("from") or {}).get("is_bot") and m.get("text")):
                 messages.append(IncomingMessage(str(m["from"]["id"]), m["from"].get("first_name", ""),
-                                                m["text"], str(m["chat"]["id"])))
+                                                m["text"], str(m["chat"]["id"]), m["from"].get("username", "")))
         return Updates(decisions, messages)
 
     def reply(self, to: IncomingMessage, text: str) -> None:

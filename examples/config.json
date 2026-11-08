@@ -36,6 +36,7 @@
   "agenda": {
     "enabled": false,
     "contributors": [
+      "@bob_nickname",
       "987654321"
     ],
     "max_items": 100,
